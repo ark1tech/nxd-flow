@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { nanoid } from "nanoid";
-import type { DecisionNode, Edge, EngineEvent, Mission } from "@autopilot/shared";
+import type { Branch, DecisionNode, Edge, EngineEvent, Mission } from "@autopilot/shared";
 
 type Db = Database.Database;
 
@@ -64,7 +64,29 @@ export class DecisionStore {
         value_json text not null,
         updated_at text not null
       );
+      create table if not exists branches (
+        id text primary key,
+        mission_id text not null,
+        from_decision_id text not null,
+        new_choice text not null,
+        worktree text,
+        status text not null,
+        invalidated_json text not null,
+        reused_json text not null,
+        diff_stat text,
+        created_at text not null,
+        updated_at text not null
+      );
     `);
+    this.ensureColumn("decisions", "branch_id", "text");
+    this.ensureColumn("decisions", "step_id", "text");
+  }
+
+  private ensureColumn(table: string, column: string, type: string): void {
+    const columns = this.db.prepare(`pragma table_info(${table})`).all() as Array<{ name: string }>;
+    if (!columns.some((entry) => entry.name === column)) {
+      this.db.exec(`alter table ${table} add column ${column} ${type}`);
+    }
   }
 
   createMission(idea: string): Mission {
@@ -98,6 +120,10 @@ export class DecisionStore {
     return (this.db.prepare("select * from missions order by created_at").all() as MissionRow[]).map(missionFromRow);
   }
 
+  clearAllMissions(): void {
+    this.db.exec("delete from branches; delete from edges; delete from events; delete from decisions; delete from cache; delete from missions;");
+  }
+
   addDecision(input: Omit<DecisionNode, "id" | "createdAt" | "updatedAt" | "reviewed"> & { id?: string }): DecisionNode {
     const now = isoNow();
     const node: DecisionNode = {
@@ -112,8 +138,8 @@ export class DecisionStore {
         .prepare(
           `insert into decisions
           (id, mission_id, question, options_json, choice, rationale, evidence_json, surfaces_json, depends_on_json,
-           tier, rule_fired, status, reviewed, commit_sha, created_at, updated_at)
-          values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           tier, rule_fired, status, reviewed, commit_sha, branch_id, step_id, created_at, updated_at)
+          values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           node.id,
@@ -130,6 +156,8 @@ export class DecisionStore {
           node.status,
           node.reviewed ? 1 : 0,
           node.commitSha ?? null,
+          node.branchId ?? null,
+          node.stepId ?? null,
           node.createdAt,
           node.updatedAt
         );
@@ -147,7 +175,7 @@ export class DecisionStore {
       .prepare(
         `update decisions set question = ?, options_json = ?, choice = ?, rationale = ?, evidence_json = ?,
         surfaces_json = ?, depends_on_json = ?, tier = ?, rule_fired = ?, status = ?, reviewed = ?, commit_sha = ?,
-        updated_at = ? where id = ?`
+        branch_id = ?, step_id = ?, updated_at = ? where id = ?`
       )
       .run(
         node.question,
@@ -162,6 +190,8 @@ export class DecisionStore {
         node.status,
         node.reviewed ? 1 : 0,
         node.commitSha ?? null,
+        node.branchId ?? null,
+        node.stepId ?? null,
         isoNow(),
         node.id
       );
@@ -172,12 +202,26 @@ export class DecisionStore {
     return row ? decisionFromRow(row) : undefined;
   }
 
-  listDecisions(missionId?: string): DecisionNode[] {
-    const stmt = missionId
-      ? this.db.prepare("select * from decisions where mission_id = ? order by created_at")
-      : this.db.prepare("select * from decisions order by created_at");
-    const rows = (missionId ? stmt.all(missionId) : stmt.all()) as DecisionRow[];
+  listDecisions(missionId?: string, branchId?: string | null): DecisionNode[] {
+    let rows: DecisionRow[];
+    if (missionId && branchId === null) {
+      rows = this.db
+        .prepare("select * from decisions where mission_id = ? and branch_id is null order by created_at")
+        .all(missionId) as DecisionRow[];
+    } else if (missionId && branchId) {
+      rows = this.db
+        .prepare("select * from decisions where mission_id = ? and branch_id = ? order by created_at")
+        .all(missionId, branchId) as DecisionRow[];
+    } else if (missionId) {
+      rows = this.db.prepare("select * from decisions where mission_id = ? order by created_at").all(missionId) as DecisionRow[];
+    } else {
+      rows = this.db.prepare("select * from decisions order by created_at").all() as DecisionRow[];
+    }
     return rows.map(decisionFromRow);
+  }
+
+  listMainDecisions(missionId?: string): DecisionNode[] {
+    return this.listDecisions(missionId, null);
   }
 
   markReviewed(id: string, reviewed = true): void {
@@ -224,7 +268,7 @@ export class DecisionStore {
 
   reusedSet(id: string, missionId?: string): string[] {
     const invalid = new Set(this.invalidationSet(id));
-    return this.listDecisions(missionId).map((node) => node.id).filter((nodeId) => !invalid.has(nodeId));
+    return this.listMainDecisions(missionId).map((node) => node.id).filter((nodeId) => !invalid.has(nodeId));
   }
 
   topoOrder(missionId?: string): string[] {
@@ -290,6 +334,48 @@ export class DecisionStore {
       .prepare("insert or replace into cache (key, value_json, updated_at) values (?, ?, ?)")
       .run(key, JSON.stringify(value), isoNow());
   }
+
+  cacheDelete(key: string): void {
+    this.db.prepare("delete from cache where key = ?").run(key);
+  }
+
+  saveBranch(branch: Branch): Branch {
+    const now = isoNow();
+    this.db
+      .prepare(
+        `insert or replace into branches
+        (id, mission_id, from_decision_id, new_choice, worktree, status, invalidated_json, reused_json, diff_stat, created_at, updated_at)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, coalesce((select created_at from branches where id = ?), ?), ?)`
+      )
+      .run(
+        branch.id,
+        branch.missionId,
+        branch.fromDecisionId,
+        branch.newChoice,
+        branch.worktree ?? null,
+        branch.status,
+        JSON.stringify(branch.invalidated),
+        JSON.stringify(branch.reused),
+        branch.diffStat ?? null,
+        branch.id,
+        branch.createdAt ?? now,
+        now
+      );
+    return { ...branch, updatedAt: now };
+  }
+
+  getBranch(id: string): Branch | undefined {
+    const row = this.db.prepare("select * from branches where id = ?").get(id) as BranchRow | undefined;
+    if (!row) return undefined;
+    return branchFromRow(row, this.listDecisions(row.mission_id, row.id));
+  }
+
+  listBranches(missionId?: string): Branch[] {
+    const rows = missionId
+      ? (this.db.prepare("select * from branches where mission_id = ? order by created_at").all(missionId) as BranchRow[])
+      : (this.db.prepare("select * from branches order by created_at").all() as BranchRow[]);
+    return rows.map((row) => branchFromRow(row, this.listDecisions(row.mission_id, row.id)));
+  }
 }
 
 interface MissionRow {
@@ -316,6 +402,22 @@ interface DecisionRow {
   status: DecisionNode["status"];
   reviewed: 0 | 1;
   commit_sha: string | null;
+  branch_id: string | null;
+  step_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface BranchRow {
+  id: string;
+  mission_id: string;
+  from_decision_id: string;
+  new_choice: string;
+  worktree: string | null;
+  status: Branch["status"];
+  invalidated_json: string;
+  reused_json: string;
+  diff_stat: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -362,6 +464,25 @@ function decisionFromRow(row: DecisionRow): DecisionNode {
     status: row.status,
     reviewed: row.reviewed === 1,
     commitSha: row.commit_sha ?? undefined,
+    branchId: row.branch_id ?? undefined,
+    stepId: row.step_id ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function branchFromRow(row: BranchRow, decisions: DecisionNode[]): Branch {
+  return {
+    id: row.id,
+    missionId: row.mission_id,
+    fromDecisionId: row.from_decision_id,
+    newChoice: row.new_choice,
+    worktree: row.worktree ?? undefined,
+    status: row.status,
+    decisions,
+    invalidated: JSON.parse(row.invalidated_json),
+    reused: JSON.parse(row.reused_json),
+    diffStat: row.diff_stat ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };

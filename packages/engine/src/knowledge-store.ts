@@ -7,8 +7,12 @@ import type { KnowledgeFact } from "@autopilot/shared";
 export class KnowledgeStore {
   constructor(
     private readonly path: string,
-    private readonly repoRoot: string
+    private repoRoot: string
   ) {}
+
+  setRepoRoot(repoRoot: string): void {
+    this.repoRoot = repoRoot;
+  }
 
   list(): KnowledgeFact[] {
     if (!existsSync(this.path)) return [];
@@ -69,7 +73,7 @@ export class KnowledgeStore {
     const evidence: string[] = [];
     const stale: string[] = [];
     for (const fact of this.list()) {
-      if (!words(fact.claim).some((word) => lower.includes(word))) continue;
+      if (!words(fact.claim).some((word) => new RegExp(`\\b${escapeRegExp(word)}\\b`).test(lower))) continue;
       const state = this.revalidate(fact);
       if (state === "fresh") evidence.push(`${fact.subject}: ${fact.claim}`);
       if (state === "stale" || state === "contested") stale.push(`${fact.subject}: ${fact.claim}`);
@@ -92,5 +96,10 @@ function words(input: string): string[] {
   return input
     .toLowerCase()
     .split(/[^a-z0-9_-]+/)
-    .filter((word) => word.length > 3);
+    .filter((word) => word.length > 3)
+    .filter((word) => !["file", "repo", "scratch", "changed", "contains"].includes(word));
+}
+
+function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

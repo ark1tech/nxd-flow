@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { DecisionNode, GateResult } from "@autopilot/shared";
+import type { AgentRunner } from "./agent-runner.js";
 import { BlastRadiusClassifier } from "./blast-radius.js";
 import type { DecisionStore } from "./decision-store.js";
 import type { KnowledgeStore } from "./knowledge-store.js";
@@ -29,6 +30,7 @@ export class DecisionGate {
     const knowledgeCoverage = this.knowledge.coverageFor(`${decision.question} ${decision.rationale} ${decision.choice}`);
     const coverageEvidence = [...profileCoverage.evidence, ...knowledgeCoverage.evidence];
     const coverage = coverageEvidence.length > 0 ? "covered" : "uncovered";
+    const trainingWheels = this.profile.trainingWheels();
     const auditNeeded = decision.tier === "medium" || decision.tier === "high" || decision.tier === "critical";
     const cacheKey = `audit:${hash(`${decision.question}:${decision.choice}:${decision.citedEvidence.join("|")}`)}`;
     const cached = this.store.cacheGet<{ status: "ok" | "flagged"; reason?: string }>(cacheKey);
@@ -37,7 +39,8 @@ export class DecisionGate {
     const budgetExhausted = auditNeeded && this.store.listEvents().filter((event) => event.type === "gate.decided").length > this.budget;
     const shouldEscalate =
       budgetExhausted ||
-      ((decision.tier === "high" || decision.tier === "critical") && (coverage === "uncovered" || auditor.status === "flagged"));
+      ((decision.tier === "high" || decision.tier === "critical") && (coverage === "uncovered" || auditor.status === "flagged")) ||
+      (trainingWheels.enabled && decision.tier === "medium" && coverage === "uncovered");
 
     const result: GateResult = {
       verdict: shouldEscalate ? "escalate" : "decide",
@@ -48,7 +51,8 @@ export class DecisionGate {
         coverageEvidence,
         auditor: auditNeeded ? auditor.status : "skipped",
         auditorReason: auditor.reason,
-        budgetExhausted
+        budgetExhausted,
+        trainingWheels: trainingWheels.enabled
       }
     };
     this.store.addEvent(shouldEscalate ? "gate.escalated" : "gate.decided", decision.missionId, { decisionId: decision.id, result });
@@ -65,6 +69,49 @@ export class MockAuditor implements Auditor {
   }
 }
 
+export class SdkAuditor implements Auditor {
+  constructor(
+    private readonly runner: Pick<AgentRunner, "run">,
+    private readonly cwd: string,
+    private readonly live: boolean
+  ) {}
+
+  async audit(decision: DecisionNode): Promise<{ status: "ok" | "flagged"; reason?: string }> {
+    const result = await this.runner.run({
+      prompt: auditorPrompt(decision),
+      cwd: this.cwd,
+      role: "auditor",
+      missionId: decision.missionId,
+      stepName: `audit-${decision.id}`,
+      live: this.live
+    });
+    if (result.status === "error") return { status: "flagged", reason: result.text };
+    return parseAudit(result.text) ?? { status: "flagged", reason: "Auditor did not return a parseable critique." };
+  }
+}
+
 function hash(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 16);
+}
+
+function auditorPrompt(decision: DecisionNode): string {
+  return [
+    "You are the Autopilot auditor. Critique this proposed Autopilot decision.",
+    "Return exactly one JSON block with {\"status\":\"ok\"|\"flagged\",\"reason\":\"...\"}.",
+    "Judge defensibility plus whether surfaces, coverage, and dependencies appear correctly cited.",
+    "",
+    JSON.stringify(decision, null, 2)
+  ].join("\n");
+}
+
+function parseAudit(text: string): { status: "ok" | "flagged"; reason?: string } | undefined {
+  const match = text.match(/```json\n([\s\S]*?)\n```/);
+  if (!match) return undefined;
+  try {
+    const parsed = JSON.parse(match[1]) as { status?: string; reason?: string };
+    if (parsed.status !== "ok" && parsed.status !== "flagged") return undefined;
+    return { status: parsed.status, reason: parsed.reason };
+  } catch {
+    return undefined;
+  }
 }

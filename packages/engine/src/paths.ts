@@ -16,6 +16,7 @@ export interface AutopilotPaths {
   knowledge: string;
   memory: string;
   worktrees: string;
+  skills: string;
 }
 
 export function resolvePaths(root = process.cwd()): AutopilotPaths {
@@ -34,7 +35,8 @@ export function resolvePaths(root = process.cwd()): AutopilotPaths {
     lessons: join(autopilot, "lessons"),
     knowledge: join(autopilot, "knowledge", "PROJECT.md"),
     memory: join(autopilot, "memory"),
-    worktrees: join(autopilot, "worktrees")
+    worktrees: join(autopilot, "worktrees"),
+    skills: join(autopilot, "skills")
   };
 }
 
@@ -52,7 +54,8 @@ export function ensureAutopilotLayout(root = process.cwd()): AutopilotPaths {
     paths.lessons,
     join(paths.autopilot, "knowledge"),
     paths.memory,
-    paths.worktrees
+    paths.worktrees,
+    paths.skills
   ]) {
     mkdirSync(dir, { recursive: true });
   }
