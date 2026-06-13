@@ -1,10 +1,7 @@
 # Buildspace Video Script — Autopilot
 
-> Spoken-style answers for the Buildspace 1 & 2 submissions. Read these aloud to camera.
-> Written solo-friendly: "Member 1" = you. If you have a second builder, fill the Member 2
-> block; otherwise frame it as a second *track* of the same project and cut the duplicate.
-> Grounded in the real repo state on 2026-06-13: pnpm monorepo, demo fixture,
-> 13 passing tests, and a working demoable Autopilot loop.
+> Read these aloud to camera. Plain language for a general CS audience.
+> Member 1 = backend / logic. Member 2 = UI / demo.
 
 ---
 
@@ -12,145 +9,136 @@
 
 ### Product introduction (to camera)
 
-"We're building **Autopilot** — an autonomous build loop that runs ahead of you, but lets you
-stay the engineer.
+"We're building **Autopilot** — an AI coding assistant that runs ahead of you, but still keeps you
+in charge.
 
-Everyone's racing to make coding agents *faster*. The problem is, the smoother the loop gets,
-the worse three things become: you stop verifying, your understanding of your own codebase
-rots — that's *comprehension debt* — and you slide into just accepting whatever the agent
-spits out. Autopilot is autonomy-first like the rest, but it's engineered so you stay in
-command without babysitting it."
+Everyone's trying to make coding bots *faster*. The catch is: the smoother they get, the less you
+understand your own code, and the easier it is to just accept whatever they output. We built
+Autopilot so you get speed *without* losing control or context."
 
 **What is your product called?**
 Autopilot.
 
 **What problem does it solve?**
-When you hand a real feature to an autonomous coding loop, your comprehension of the code rots
-and you slide into accepting whatever it produces. Existing tools optimize throughput and leave
-you unable to answer "why was it built this way?" — and give you no cheap way to explore "what
-if that decision had gone differently?" Autopilot keeps you the engineer.
+AI can write code for you, but it often leaves you unable to explain *why* things were built that
+way — or what would have happened if it had chosen differently. Autopilot records the important
+choices, shows you what you haven't reviewed yet, and lets you rewind and try another path without
+starting over.
 
 **Who is it for?**
-Builders and engineers running autonomous coding loops — Cursor, Codex, Claude Code users — who
-are shipping real features, not toy demos, and refuse to lose the plot on their own codebase.
+Software engineers who use AI coding tools (like Cursor or Claude) on real projects — not just
+small demos — and want to stay responsible for their codebase.
 
 **Why did you choose this idea?**
-It comes straight out of Addy Osmani's *Loop Engineering* — his conclusion is "Build the loop,
-stay the engineer." Every tool nails the first half. Nobody operationalizes the second half. We
-wanted to build the thing that makes "stay the engineer" a real, mechanical feature, not advice.
+The advice is always "use AI, but stay the engineer." Most tools only help with the first part.
+We wanted to build the second part into the product itself.
 
 **What makes it unique?**
-Three things existing loops don't have:
-1. **Grounded escalation** — the agent only pauses to ask you on real *evidence*, not a
-   hallucinated confidence score. A deterministic rule classifies blast-radius; the model never
-   rates its own risk.
-2. **A comprehension-debt meter** — every consequential decision is a visible, blast-radius-
-   weighted number you choose when to pay down, by opening a node and saving a lesson.
-3. **Git-for-decisions branching** — fork any decision the agent made, override it, and the loop
-   re-runs *only the affected subtree* while reusing the independent decisions, so you compare two
-   coherent versions side by side. The default demo is graph-level; real git worktrees are an
-   opt-in path.
+Three things:
+
+1. **Smart pauses** — the bot only asks you when a choice is actually risky and it lacks clear
+  guidance. It doesn't nag you on every line, and it doesn't hide big decisions either.
+2. **A "what I don't understand yet" score** — a number that goes down as you review the choices
+  the bot made. Like a todo list for your understanding of the project.
+3. **Branching on decisions** — change one past choice (e.g. "use sessions instead of JWT") and
+  the system re-runs only what depended on that choice. You can compare two versions side by side.
 
 ---
 
 ### Task delegation / planning
 
 **What is each member responsible for?**
-The work splits cleanly along the architecture:
-- **Engine / brains** — the deterministic core: the decision graph, the blast-radius classifier,
-  the escalation gate, the profile store, the debt meter. This is the trust anchor and gets the
-  heaviest test coverage.
-- **Agents + MCP boundary** — the `AgentRunner` that wraps the Cursor SDK and the Autopilot MCP
-  server that exposes engine operations (log decision, escalate, save handoff) to the agents.
-- **Dashboard / surface** — the Vite + React SPA: the live decision feed, the decision-DAG
-  visualizer (React Flow), the debt meter, and the branch/compare view, streaming over WebSocket.
+
+- **Member 1** — The brain: tracking decisions, deciding when to ask the human, scoring
+comprehension debt, and handling pivots correctly.
+- **Member 2** — What you see: the web dashboard, live updates, the decision map, and the demo
+flow for the camera.
+- **Together** — Connecting the AI agent to the engine and making the whole loop runnable end to end.
 
 **What are your goals before Buildspace 2?**
-Have the full demo run live, end to end: give Autopilot a rough feature, watch decisions stream
-into the dashboard with the DAG drawing itself, hit exactly one well-justified escalation, ship
-working code, then **pivot a load-bearing decision (JWT → sessions)** and watch the decision graph
-show what gets invalidated versus reused while the debt meter drops. Live Cursor SDK runs remain an
-optional `--live` path; the primary demo is deterministic so it is reliable on camera.
+Run the full demo live: describe a feature → watch decisions appear on screen → bot pauses once
+on a real auth choice → code ships → we change that auth choice and show what gets re-done vs
+what stays the same → comprehension score drops when we review a decision.
 
 ---
 
 ### Progress
 
 **What have you completed?**
-The whole spine is built and demoable:
-- A pnpm monorepo with `engine`, `mcp`, `dashboard`, `cli`, `shared`, plus a Fastify fixture service.
-- The trust core implemented with **13 passing tests**: decision store/graph, blast-radius classifier,
-  escalation gate, profile store, debt meter, edge deriver, knowledge store, and the resumable loop.
-- A working **end-to-end `LoopEngine`**: it starts a mission, runs stepped agent turns, logs each
-  consequential decision, runs it through the grounded gate, emits live dashboard events, pauses on
-  the JWT-vs-sessions decision, resumes on human answer, pivots with invalidate/reuse, and saves
-  lessons.
+
+- The core app structure (backend, UI, shared types, CLI).
+- The logic layer with automated tests — decision tracking, risk rules, when-to-ask logic, user
+preferences, debt score, and the main loop.
+- An end-to-end demo: start a mission, log decisions, pause on escalation, answer it, pivot, save
+a lesson. It works today.
 
 **What are you currently working on?**
-Polishing the demo path and deciding how far to push live Cursor SDK runs beyond the deterministic
-scripted pilot.
+Polishing the demo so it's smooth on camera, and optionally hooking up live AI runs vs our
+reliable scripted demo.
 
 **What has gone well?**
-The deterministic core came together fast and is fully tested — the part we were most worried
-about (trustworthy escalation) is solid. The end-to-end loop already runs a full mission today.
+The hardest part — knowing when to trust the bot vs when to ask the human — is built and tested.
+The full loop already runs.
 
 **What has been difficult?**
-The hard part is philosophical-turned-mechanical: keeping the LLM *out of the verdict*. The model
-produces evidence; a deterministic rule or explicit human consent makes the call. Getting the
-escalation truth table right — tier × profile-coverage × auditor flag — and making DAG edges
-trustworthy (filesystem ground truth, not just what the agent claimed) took real care.
+Making sure the AI suggests things but doesn't *decide* whether they're safe. Rules and human
+answers make the final call. Also: tracking which decisions depend on which, so a pivot doesn't
+miss related code.
 
 **What is your next goal?**
-The live pivot demo: override a decision and watch only the dependent subtree re-run while the
-independent layout decision is reused.
+The pivot moment on camera: change one decision and show only the affected work getting redone.
 
 ---
 
-### Member 1 update (you)
+### Member 1 update
 
 **What are you personally building?**
-The engine's deterministic core — the decision graph and the grounded escalation gate. It's the
-trust anchor of the whole product: if this is wrong, nothing downstream can be trusted.
+The backend logic — especially the decision tracker and the rules for when the bot should stop
+and ask a human. If this is wrong, the whole product can't be trusted.
 
 **What are you most excited about?**
-The pivot. Forking a single decision and watching the loop re-react — re-deciding and
-re-implementing *only* what that change touched — is the moment that makes people's jaws drop.
+The pivot. Change one decision and watch the system redo only what actually depended on it.
+That's the wow moment.
 
 **What will be the hardest part?**
-Dependency-aware re-execution: figuring out exactly which decisions a pivot invalidates without
-either churning unrelated code or silently missing an edge. We solve it conservatively — re-run
-too much rather than too little — and self-correct by diffing produced artifacts.
+Knowing exactly which past decisions and code to redo when you change one choice — without redoing
+everything or missing something important.
 
 **Do you think your team can win?**
-Yes. Most projects are a throughput wrapper. We're building the thing the whole industry is about
-to need — and the spine already runs.
+Yes. Most teams ship a faster chatbot. We're solving "stay in control" — and it already runs.
 
-### Member 2 update (fill or cut)
+### Member 2 update
 
 **What are you personally building?**
-[The dashboard surface / the agent + MCP boundary — pick the track this person owns.]
+The dashboard — the screen people actually use. Live feed of what the bot is doing, a visual map
+of decisions, the comprehension score, buttons to answer escalations and trigger pivots, and a
+file viewer to see what code changed.
 
 **What are you most excited about?**
-[e.g. watching the decision DAG draw itself live as the loop runs.]
+Watching the decision map build itself in real time. You see each choice appear, the bot pauses
+when it should, and after a pivot you instantly see what changed vs what stayed.
 
 **What will be the hardest part?**
-[e.g. real-time streaming and keeping the visualizer in sync with engine state.]
+Keeping the UI accurate while everything is moving fast — no stale screens, no flicker — and
+making the pivot comparison easy to understand at a glance. Plus making the demo reliable every
+time we film it.
 
 **Do you think your team can win?**
-[Their honest take.]
+Yes. A lot of teams demo in a terminal or on slides. We have a real UI that shows the idea — and
+the pivot compare is memorable if we nail it on camera.
 
 ---
 
 ### Footage / B-roll shotlist (Buildspace 1)
 
-- [ ] **Product introduction** — to-camera, the intro paragraph above.
-- [ ] **Task delegation** — whiteboard or screen with the 3-track split; point at modules.
+- [ ] **Product introduction** — to-camera, intro paragraph above.
+- [ ] **Task delegation** — whiteboard: Member 1 = logic, Member 2 = UI.
 - [ ] **Member 1 update** — to-camera.
-- [ ] **Member 2 update** — to-camera (or second track).
-- [ ] **Team update** — the Progress section, delivered together.
-- [ ] **Product showcase** — screen-record `vitest run` going green; run a mission via the CLI.
-- [ ] **Coding timelapse** — sped-up screen capture of an editing session in `packages/engine`.
-- [ ] **Development B-roll** — terminal scrolling, the DAG/feed, hands on keyboard, close-ups.
+- [ ] **Member 2 update** — to-camera.
+- [ ] **Team update** — Progress section, together.
+- [ ] **Product showcase** — tests passing; run a mission in the app.
+- [ ] **Coding timelapse** — sped-up coding session.
+- [ ] **Development B-roll** — terminal, dashboard, keyboard, screens.
 
 ---
 
@@ -159,84 +147,83 @@ to need — and the spine already runs.
 ### Member 1 challenge update
 
 **What challenge are you facing?**
-Making escalation trustworthy without making it annoying. If the agent pauses too often it's a
-nagging approval treadmill; if it pauses too little it's a black box. The whole bet rides on
-grounding the *when-to-ask* in real evidence instead of a vibe.
+The bot needs to ask humans rarely but at the right times. Too many questions = annoying. Too few
+= dangerous. We're betting on clear rules instead of "the model felt confident."
 
 **What has slowed you down?**
-Edge fidelity in the decision DAG. Self-declared dependencies fail silently — the agent forgets
-to mention an edge — so a pivot can miss code it should have re-run. We had to derive edges from
-the real filesystem/import graph as ground truth on top of what the agent declares.
+The bot doesn't always say which earlier choices a new choice depends on. We had to infer
+dependencies from the actual code and files, not just trust what the bot claimed.
 
 **Have you changed your plan?**
-We tightened scope: v1 is one mission, end to end, implemented serially. Parallel "Amdahl"
-scheduling across worktrees and cloud runtime are explicitly out of scope — they'd be a great
-demo but they're not what proves the thesis.
+We narrowed scope: one feature, end to end, step by step. Parallel missions and cloud hosting are
+out for now — they don't prove the core idea.
 
 **How will you solve this problem?**
-Conservative, self-correcting re-execution: when a dependency is uncertain, re-run it anyway —
-re-derivation is idempotent, so over-including costs compute, not correctness. After each pivot we
-diff produced artifacts; a "reused" file that *would* have changed reveals a missing edge and we
-add it. The graph sharpens every pivot.
+When we're unsure if something depends on a changed decision, we redo it anyway — safer to redo
+too much than miss something. After each pivot we compare outputs to catch anything we missed.
 
 **Can you still finish on time?**
-Yes — the spine and the full loop already run with passing tests. What's left is wiring the live
-UI and the SDK agents, which is integration work, not unsolved research.
+Yes. The core loop works and tests pass. What's left is polish and connecting live AI runs — not
+unsolved research.
 
-### Member 2 challenge update (fill or cut)
+### Member 2 challenge update
 
 **What challenge are you facing?**
-[e.g. streaming engine state to the dashboard in real time without it going stale.]
+The dashboard has to tell the story *while* the bot is working — not after. If the map or the
+score lags even for a second, the "transparent AI" pitch breaks.
 
 **What has slowed you down?**
-[Their honest blocker.]
+The pivot comparison screen. People need to instantly see: what changed, what stayed, and the
+actual code difference — not just a list of IDs.
 
 **Have you changed your plan?**
-[Any pivot in their track.]
+We prioritized a reliable scripted demo for the camera first. Live AI runs are optional for now —
+a flaky bot on stage would hurt the trust story.
 
 **How will you solve this problem?**
-[Their approach.]
+Push full state updates to the UI on every step. Highlight changed decisions, fade unchanged ones,
+auto-open the screen when the bot needs an answer. Rehearse one fixed demo path (auth feature,
+JWT → sessions pivot).
 
 **Can you still finish on time?**
-[Their honest call.]
+Yes. Streaming, the map, escalations, and pivot compare already work. Leftover work is visual
+polish, not rebuilding from scratch.
 
 ---
 
 ### End-of-day reflection (team)
 
 **What did you accomplish today?**
-Got the entire deterministic core and the end-to-end loop engine running green — start a mission,
-log decisions, gate them, checkpoint, escalate, resume, pivot, save a lesson.
+Core logic and the full loop are running — missions, decisions, pauses, pivots, lessons.
 
 **What still needs to be finished?**
-Further polish on live Cursor SDK maker/auditor agents beyond the deterministic pilot, and richer
-visual design for the JWT → sessions pivot compare.
+Polish on live AI integration and a cleaner pivot comparison view for the demo.
 
 **Are you ahead or behind schedule?**
-On track — arguably ahead on the risky part. We front-loaded the trust anchor (the part that
-could've sunk us) and it's done and tested.
+On track — maybe ahead on the risky backend work.
 
 **Do you think you'll finish tomorrow?**
-The core demo, yes. The stretch — running a second mission in parallel to show scheduling — is a
-bonus we'll attempt only if the main flow is locked.
+Yes for the core demo. Running two missions in parallel would be a bonus if we have time.
 
 **Why should your team win?**
-Because everyone else is making the loop faster, and we're the only ones making it *yours*. We
-took a real, named problem — comprehension debt and cognitive surrender — and turned it into
-mechanical features: grounded escalation, a debt meter, and git-for-decisions branching. And it's
-not a mockup — the engine runs today.
+Everyone else is racing to make AI code faster. We're the only team making it *yours* — visible
+choices, a comprehension score, and branching on decisions. And it's not vaporware; it runs today.
 
 **Team prediction.**
-We finish the core demo and land the pivot moment live. That's the clip that wins it.
+We land the live pivot on camera. That's the clip people remember.
 
 ---
 
 ### Footage / B-roll shotlist (Buildspace 2)
 
-- [ ] **Member 1 challenge update** — to-camera, escalation-trust challenge.
-- [ ] **Member 2 challenge update** — to-camera (or second track).
-- [ ] **Product showcase / demo** — live mission run: decisions appearing, one escalation, a pivot.
-- [ ] **Problem-solving B-roll** — debugging the gate/DAG; tests turning red→green; whiteboarding.
-- [ ] **Team reflection** — the end-of-day answers, delivered together.
-- [ ] **Team prediction** — the one-liner above, to camera.
-- [ ] **End-of-day B-roll** — desk wind-down, screens, late-night work shots.
+- [ ] **Member 1 challenge update** — to-camera.
+- [ ] **Member 2 challenge update** — to-camera.
+- [ ] **Product show**
+- [ ] 
+- [ ] 
+- [ ] 
+- [ ] **case / demo** — full mission: decisions, one pause, one pivot.
+- [ ] **Problem-solving B-roll** — debugging, tests, whiteboard.
+- [ ] **Team reflection** — end-of-day answers together.
+- [ ] **Team prediction** — to camera.
+- [ ] **End-of-day B-roll** — wind-down shots.

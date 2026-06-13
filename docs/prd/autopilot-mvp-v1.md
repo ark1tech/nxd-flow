@@ -288,7 +288,7 @@ hybrid push+pull within a token budget and materialized (git-ignored) under `mem
   step prompt reliably making the Pilot stop-and-propose.
 - **ADRs:** 0001 Cursor SDK + local runtime · 0002 daemon + SPA · 0003 hybrid SQLite+markdown ·
   0004 Decision DAG + multi-source edges + commit-replay reuse · 0005 grounded decisioning (evidence vs
-  verdict, auditor, `DecisionGate`) · 0006 orchestrator-stepped loop.
+  verdict, auditor, `DecisionGate`) · 0006 orchestrator-stepped loop · 0008 scratch repos + real code gate.
 - **Issues:** v1 is sliced into vertical tracer bullets `S1…S8` (see `docs/issues/`), starting with a
   walking skeleton (idea → one proposed decision → live in the feed) and thickening from there.
 - **Glossary:** canonical terms in `docs/GLOSSARY.md` (destined for `.autopilot/glossary/PROJECT.md`).

@@ -15,6 +15,7 @@ A loop-engineering build system with a **Pilot** that runs ahead of you while yo
 - [ADR-0005 — Grounded decisioning: evidence vs. verdict (auditor, `DecisionGate`)](adr/0005-grounded-decisioning-evidence-vs-verdict.md)
 - [ADR-0006 — Orchestrator owns the loop (stepped runs, gate between steps)](adr/0006-orchestrator-stepped-loop.md)
 - [ADR-0007 — Memory is a view; one small Project-knowledge store; grounded reads](adr/0007-memory-as-view-plus-knowledge-store.md)
+- [ADR-0008 — Execute missions in isolated scratch repos with a real code gate](adr/0008-execution-sandbox-and-real-code-gate.md)
 
 ## Issues (vertical tracer-bullet slices)
 

@@ -55,6 +55,10 @@ the `LoopEngine` sees a single call per proposed decision (ADR-0006).
 or cached over the one transactional Decision Store (ADR-0003); `DebtMeter` is a pure scoring function, not
 a stateful module.
 
+**Execution sandbox.** Code-producing decisions are verified and committed in an isolated Mission scratch
+repo, so grounded verdicts, checkpoints, and pivot replay are real without mutating the Autopilot tool repo
+(ADR-0008).
+
 **Safe-degradation invariant:** every mechanism fails toward "ask the human" or "re-run too much," never
 toward "silently wrong."
 

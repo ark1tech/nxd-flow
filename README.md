@@ -33,26 +33,20 @@ See `DEMO.md` for the full walkthrough.
 
 ## Live Cursor SDK Runs
 
-By default the MVP uses a deterministic mock `AgentRunner` so tests and demos run offline. To ask the Cursor
-SDK to produce a step result, set `CURSOR_API_KEY` and pass `--live`:
+`pnpm verify` uses deterministic mock replay so CI is stable. Live missions load `CURSOR_API_KEY` from
+`.env` (or the shell) and pass a real stdio MCP server inline to Cursor SDK agents:
 
 ```bash
-CURSOR_API_KEY=cursor_... pnpm autopilot -- mission "Add authentication" --live
+pnpm autopilot -- mission "Add authentication" --live
 ```
 
-If the model does not emit Autopilot's decision JSON yet, the runner falls back to a deterministic decision
-so the loop remains demoable while prompts mature.
+If no key is available, Autopilot falls back to mock replay.
 
 ## Checkpoints
 
-Local mission runs use pseudo-checkpoints by default so development smoke tests do **not** create git
-commits. Real commit checkpoints are opt-in:
-
-```bash
-AUTOPILOT_ENABLE_GIT_CHECKPOINTS=1 pnpm autopilot -- mission "Add authentication"
-```
-
-Pivoting requires real checkpoints because it uses git worktrees and commit replay.
+Missions run in isolated scratch repos under `.autopilot/worktrees/`. Every cleared Decision Node creates a
+real commit checkpoint there; pivots create real git worktrees and compare changed files without mutating
+this product repo.
 
 ## Docs
 
@@ -60,5 +54,5 @@ Start with `docs/README.md`, then read:
 
 - `docs/prd/autopilot-mvp-v1.md`
 - `docs/GLOSSARY.md`
-- `docs/adr/0001...0007`
+- `docs/adr/0001...0008`
 - `docs/issues/001...010`

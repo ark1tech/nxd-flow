@@ -31,8 +31,8 @@ orchestrator (many bounded runs).
 
 Consequences for related mechanisms:
 - Classification/audit/escalation are enforceable at a real boundary (this makes ADR-0005 implementable).
-- One Decision Node ↔ one bounded step ↔ (when it produces code) one git commit/Checkpoint — which is
-  exactly what commit-replay pivots need (ADR-0004).
+- One Decision Node ↔ one bounded step ↔ (when it produces code) one git commit/Checkpoint in the Mission
+  scratch repo — which is exactly what commit-replay pivots need (ADR-0004, ADR-0008).
 - Each step is fed a **working-memory** context pack assembled by the engine from canonical state (the
   memory *view*, ADR-0007) rather than relying on the agent's own thread to carry context across `resume`.
 

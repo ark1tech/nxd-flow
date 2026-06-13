@@ -24,7 +24,8 @@ Options considered:
 
 Use the **Cursor SDK, TypeScript variant (`@cursor/sdk`)**, on the **local runtime** (`local: { cwd }`).
 
-- Each Mission/branch runs against a real git worktree (a `cwd`) on the user's machine.
+- Each Mission/branch runs against a real git worktree (a `cwd`) on the user's machine. For v1 this `cwd`
+  is an isolated scratch repo under `.autopilot/worktrees/`, not the Autopilot tool repo itself (ADR-0008).
 - Maker and checker are two SDK `Agent`s with different models.
 - Missions use `Agent.create` / `agent.send` for durable multi-turn runs; `Agent.resume` continues across
   the heartbeat. The `.autopilot` MCP server is passed **inline** on every `create`/`send`/`resume`

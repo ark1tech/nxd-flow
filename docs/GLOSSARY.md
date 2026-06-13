@@ -75,8 +75,8 @@ canonical source destined for `.autopilot/glossary/PROJECT.md`.
 - **Verification budget** — risk-proportional checker spend (low→none, medium→cheap, high/critical→full
   audit), with a verdict cache and a per-Mission ceiling that *escalates when exhausted* (never silently
   skips).
-- **Checkpoint** — a Decision Node's restorable point: a git commit/tag (when code exists) plus the
-  loop-state snapshot. The fork point for a pivot.
+- **Checkpoint** — a Decision Node's restorable point: a real git commit in the Mission scratch repo plus
+  the loop-state snapshot. The fork point for a pivot.
 - **Branch / Pivot** — overriding a Decision Node and re-running forward: fork a git **worktree** from the
   node's checkpoint, **commit-replay** the reused (non-dependent) decisions' original commits, and
   re-run only the `invalidationSet` (its transitive dependents) with fresh agent runs.
@@ -92,9 +92,14 @@ canonical source destined for `.autopilot/glossary/PROJECT.md`.
   the human.
 - **`AgentRunner`** — the adapter over `@cursor/sdk` (local runtime; create/send/resume/stream; maker vs
   auditor model; inline MCP; disposal + error taxonomy).
+- **Scratch repo** — a git-ignored per-Mission copy of the target project under `.autopilot/worktrees/`.
+  Real code edits, verification, checkpoints, and pivot worktrees happen here so the Autopilot product repo
+  stays clean.
 - **`AutopilotMcpServer`** — engine operations exposed to agents as MCP tools (`propose_decision`,
-  `cite_surfaces`, `cite_dependencies`, `get_profile`, `coverage_for`, `record_handoff`, `read_state`).
-- **`WorktreeManager`** — git worktree/checkpoint lifecycle (checkpoint/fork/commit-replay/compare/cleanup).
+  `cite_surfaces`, `cite_dependencies`, `get_profile`, `coverage_for`, `propose_knowledge`, `read_memory`,
+  `read_knowledge`, `record_handoff`, `read_state`).
+- **`WorktreeManager`** — scratch repo and git worktree/checkpoint lifecycle
+  (copy target, checkpoint/fork/commit-replay/compare/cleanup).
 - **`DashboardGateway`** — WS event stream + REST actions between the daemon and the SPA dashboard.
 
 ## Governing principle
