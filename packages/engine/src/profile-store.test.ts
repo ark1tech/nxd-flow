@@ -28,4 +28,39 @@ describe("ProfileStore", () => {
     expect(store.effectiveRules()[0].text).toContain("sessions");
     rmSync(dir, { recursive: true, force: true });
   });
+
+  it("reports training wheels while the profile has fewer than two rules", () => {
+    const dir = mkdtempSync(join(tmpdir(), "autopilot-profile-"));
+    const store = new ProfileStore(join(dir, "PROFILE.md"), join(dir, "history"));
+
+    expect(store.trainingWheels()).toEqual({ enabled: true, ruleCount: 0, requiredRules: 2 });
+    store.seedFromOnboarding(["Prefer JWT for auth in the fixture", "Avoid magic abstractions"]);
+    expect(store.trainingWheels()).toEqual({ enabled: false, ruleCount: 2, requiredRules: 2 });
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("hardens repeated provisional rules and surfaces conflicts", () => {
+    const dir = mkdtempSync(join(tmpdir(), "autopilot-profile-"));
+    const store = new ProfileStore(join(dir, "PROFILE.md"), join(dir, "history"));
+
+    const first = store.proposeDelta("Prefer JWT for auth strategy", "global");
+    const second = store.proposeDelta("Prefer JWT for auth strategy", "global");
+    const conflict = store.proposeDelta("Prefer sessions for auth strategy", "global");
+
+    expect(first.rule?.provisional).toBe(true);
+    expect(second.rule?.provisional).toBe(false);
+    expect(second.rule?.weight).toBeGreaterThan(first.rule!.weight);
+    expect(conflict.conflicts?.[0]).toContain("Prefer JWT for auth strategy");
+    expect(store.effectiveRules().find((rule) => rule.text.includes("JWT"))?.weight).toBeLessThan(1);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("exposes decayStale as a no-op baseline hook", () => {
+    const dir = mkdtempSync(join(tmpdir(), "autopilot-profile-"));
+    const store = new ProfileStore(join(dir, "PROFILE.md"), join(dir, "history"));
+    store.seedFromOnboarding(["Prefer JWT for auth in the fixture"]);
+
+    expect(store.decayStale()).toEqual({ decayed: 0 });
+    rmSync(dir, { recursive: true, force: true });
+  });
 });

@@ -54,6 +54,31 @@ describe("DecisionGate", () => {
     expect(result.evidence.coverage).toBe("covered");
     ctx.cleanup();
   });
+
+  it("escalates uncovered medium decisions while training wheels are enabled", async () => {
+    const ctx = setup();
+    const mission = ctx.store.createMission("Touch layout");
+    const decision = ctx.store.addDecision({
+      missionId: mission.id,
+      question: "Where should layout helpers live?",
+      options: [{ id: "local", label: "Local module" }],
+      choice: "local",
+      rationale: "Touches cross-cutting project layout.",
+      citedEvidence: [],
+      citedSurfaces: [{ id: "layout", kind: "cross-cutting", source: "cited" }],
+      dependsOn: [],
+      tier: "low",
+      ruleFired: "unclassified",
+      status: "proposed"
+    });
+    const gate = new DecisionGate(ctx.classifier, ctx.profile, ctx.knowledge, ctx.store, okAuditor);
+
+    const result = await gate.evaluate(decision);
+
+    expect(result.verdict).toBe("escalate");
+    expect(result.evidence.trainingWheels).toBe(true);
+    ctx.cleanup();
+  });
 });
 
 const okAuditor: Auditor = { audit: async () => ({ status: "ok", reason: "covered" }) };
