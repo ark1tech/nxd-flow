@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { createAutopilot, ensureAutopilotLayout } from "@autopilot/engine";
+import { createAutopilot, ensureAutopilotLayout, loadAutopilotConfig } from "@autopilot/engine";
 
 const workspaceRoot = process.env.INIT_CWD ?? process.cwd();
+const config = loadAutopilotConfig(workspaceRoot);
 const [command, ...args] = process.argv.slice(2).filter((arg) => arg !== "--");
 
 if (!command || command === "help") {
@@ -18,7 +19,7 @@ if (command === "init") {
 }
 
 if (command === "start") {
-  const port = Number(args[0] ?? process.env.AUTOPILOT_PORT ?? 4317);
+  const port = Number(args[0] ?? config.port);
   const { gateway } = createAutopilot(workspaceRoot);
   gateway.listen(port);
   console.log(`Autopilot engine listening on http://localhost:${port}`);
@@ -43,7 +44,7 @@ if (command === "start") {
     mission: result.mission.status,
     decisions: result.decisions.map((decision) => ({ id: decision.id, question: decision.question, tier: decision.tier, choice: decision.choice })),
     escalated,
-    pivot: { invalidated: pivot.invalidated, reused: pivot.reused, changed: pivot.compare.changed },
+    pivot: { invalidated: pivot.invalidated, reused: pivot.reused, changed: pivot.compare.changed, branchId: pivot.branch.id },
     lessonPath
   };
   if (command === "verify") {
