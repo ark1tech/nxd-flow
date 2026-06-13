@@ -1,0 +1,36 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  @apply bg-canvas font-sans text-ink antialiased;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.react-flow__node {
+  font-size: 12px;
+}
+
+.react-flow__controls {
+  @apply overflow-hidden rounded-xl border border-border bg-panel shadow-card;
+}
+
+.react-flow__controls-button {
+  @apply border-none bg-transparent text-muted;
+}
+
+.react-flow__controls-button:hover {
+  @apply bg-canvas text-ink;
+}
+
+.react-flow__edge-text {
+  @apply fill-muted text-[10px];
+}
