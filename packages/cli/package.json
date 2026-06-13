@@ -1,0 +1,18 @@
+{
+  "name": "@autopilot/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "autopilot": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "autopilot": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@autopilot/engine": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2"
+  }
+}
