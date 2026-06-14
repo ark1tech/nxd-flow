@@ -1,20 +1,47 @@
 /** @type {import('tailwindcss').Config} */
 export default {
+  darkMode: ["class"],
   content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
   theme: {
     extend: {
       colors: {
-        canvas: "#f5f5f7",
-        panel: "#ffffff",
-        border: "#e5e5ea",
-        "border-strong": "#d1d1d6",
-        ink: "#1d1d1f",
-        muted: "#86868b",
-        accent: "#007aff",
-        "accent-hover": "#0066d6",
-        success: "#34c759",
-        warning: "#ff9500",
-        danger: "#ff3b30"
+        background: "hsl(var(--background))",
+        foreground: "hsl(var(--foreground))",
+        card: {
+          DEFAULT: "hsl(var(--card))",
+          foreground: "hsl(var(--card-foreground))"
+        },
+        popover: {
+          DEFAULT: "hsl(var(--popover))",
+          foreground: "hsl(var(--popover-foreground))"
+        },
+        primary: {
+          DEFAULT: "hsl(var(--primary))",
+          foreground: "hsl(var(--primary-foreground))"
+        },
+        secondary: {
+          DEFAULT: "hsl(var(--secondary))",
+          foreground: "hsl(var(--secondary-foreground))"
+        },
+        canvas: "hsl(var(--canvas))",
+        panel: "hsl(var(--panel))",
+        border: "hsl(var(--border))",
+        "border-strong": "hsl(var(--border-strong))",
+        ink: "hsl(var(--ink))",
+        muted: "hsl(var(--muted-foreground))",
+        accent: {
+          DEFAULT: "hsl(var(--accent))",
+          foreground: "hsl(var(--accent-foreground))"
+        },
+        destructive: {
+          DEFAULT: "hsl(var(--destructive))",
+          foreground: "hsl(var(--destructive-foreground))"
+        },
+        success: "hsl(var(--success))",
+        warning: "hsl(var(--warning))",
+        danger: "hsl(var(--destructive))",
+        input: "hsl(var(--input))",
+        ring: "hsl(var(--ring))"
       },
       fontFamily: {
         sans: [
@@ -22,6 +49,7 @@ export default {
           "BlinkMacSystemFont",
           "SF Pro Text",
           "SF Pro Display",
+          "Segoe UI",
           "Helvetica Neue",
           "Helvetica",
           "Arial",
@@ -29,9 +57,9 @@ export default {
         ]
       },
       boxShadow: {
-        card: "0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04)",
-        panel: "0 4px 24px rgba(0,0,0,0.06)",
-        float: "0 8px 32px rgba(0,0,0,0.08)"
+        card: "0 1px 3px hsl(0 0% 0% / 0.08), 0 1px 2px hsl(0 0% 0% / 0.04)",
+        panel: "0 4px 24px hsl(0 0% 0% / 0.08)",
+        float: "0 8px 32px hsl(0 0% 0% / 0.12)"
       },
       borderRadius: {
         xl: "12px",
@@ -42,8 +70,8 @@ export default {
       },
       keyframes: {
         pulseSoft: {
-          "0%, 100%": { boxShadow: "0 0 0 0 rgba(0, 122, 255, 0.2)" },
-          "50%": { boxShadow: "0 0 0 6px rgba(0, 122, 255, 0)" }
+          "0%, 100%": { boxShadow: "0 0 0 0 hsl(var(--accent) / 0.2)" },
+          "50%": { boxShadow: "0 0 0 6px hsl(var(--accent) / 0)" }
         }
       }
     }

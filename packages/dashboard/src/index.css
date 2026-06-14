@@ -2,17 +2,84 @@
 @tailwind components;
 @tailwind utilities;
 
-html,
-body,
-#root {
-  height: 100%;
-  overflow: hidden;
-}
+@layer base {
+  :root {
+    --background: 240 5% 96%;
+    --foreground: 240 6% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 6% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 6% 10%;
+    --primary: 211 100% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 5% 96%;
+    --secondary-foreground: 240 6% 10%;
+    --muted: 240 4% 46%;
+    --muted-foreground: 240 4% 46%;
+    --accent: 211 100% 50%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 4 90% 58%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 240 6% 90%;
+    --border-strong: 240 5% 82%;
+    --input: 240 6% 90%;
+    --ring: 211 100% 50%;
+    --success: 142 71% 45%;
+    --warning: 32 100% 50%;
+    --grid: 240 6% 90%;
 
-body {
-  @apply bg-canvas font-sans text-ink antialiased;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+    --canvas: var(--background);
+    --panel: var(--card);
+    --ink: var(--foreground);
+  }
+
+  .dark {
+    /* Cursor / VS Code Dark+ palette */
+    --background: 0 0% 12%;
+    --foreground: 0 0% 80%;
+    --card: 0 0% 15%;
+    --card-foreground: 0 0% 80%;
+    --popover: 0 0% 15%;
+    --popover-foreground: 0 0% 80%;
+    --primary: 204 100% 49%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 18%;
+    --secondary-foreground: 0 0% 80%;
+    --muted: 0 0% 52%;
+    --muted-foreground: 0 0% 52%;
+    --accent: 204 100% 49%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 6 78% 68%;
+    --destructive-foreground: 0 0% 12%;
+    --border: 0 0% 24%;
+    --border-strong: 0 0% 20%;
+    --input: 0 0% 24%;
+    --ring: 204 100% 49%;
+    --success: 106 42% 68%;
+    --warning: 48 96% 53%;
+    --grid: 0 0% 20%;
+
+    --canvas: var(--background);
+    --panel: var(--card);
+    --ink: var(--foreground);
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    @apply bg-canvas font-sans text-ink antialiased;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
 }
 
 .react-flow__node {
@@ -33,4 +100,42 @@ body {
 
 .react-flow__edge-text {
   @apply fill-muted text-[10px];
+}
+
+.chat-panel .chat-panel-scroll,
+.side-panel .hover-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.chat-panel:hover .chat-panel-scroll,
+.side-panel:hover .hover-scroll {
+  scrollbar-color: hsl(var(--muted) / 0.35) transparent;
+}
+
+.chat-panel .chat-panel-scroll::-webkit-scrollbar,
+.side-panel .hover-scroll::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+.chat-panel .chat-panel-scroll::-webkit-scrollbar-track,
+.side-panel .hover-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chat-panel .chat-panel-scroll::-webkit-scrollbar-thumb,
+.side-panel .hover-scroll::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 9999px;
+}
+
+.chat-panel:hover .chat-panel-scroll::-webkit-scrollbar-thumb,
+.side-panel:hover .hover-scroll::-webkit-scrollbar-thumb {
+  background-color: hsl(var(--muted) / 0.35);
+}
+
+.chat-panel:hover .chat-panel-scroll::-webkit-scrollbar-thumb:hover,
+.side-panel:hover .hover-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: hsl(var(--muted) / 0.55);
 }
