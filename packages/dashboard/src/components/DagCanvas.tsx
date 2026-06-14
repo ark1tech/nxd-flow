@@ -2,22 +2,38 @@ import type { ReactElement } from "react";
 import { useEffect, useMemo } from "react";
 import ReactFlow, { Background, Controls, ReactFlowProvider, type Node, type NodeMouseHandler, useReactFlow } from "reactflow";
 import "reactflow/dist/style.css";
-import type { Branch, DashboardSnapshot } from "@autopilot/shared";
+import type { Branch, ClarificationState, DashboardSnapshot } from "@autopilot/shared";
+import { activeClarificationQuestion } from "../lib/graphNodes";
+import { layoutScopeGraph } from "../lib/layoutScope";
 import DecisionNodeCard from "./DecisionNodeCard";
+import OptionNodeCard from "./OptionNodeCard";
+import ScopeNodeCard from "./ScopeNodeCard";
 import { EmptyState } from "./EmptyState";
 import { layoutGraph } from "../lib/layout";
 
-const nodeTypes = { decision: DecisionNodeCard };
+const nodeTypes = { decision: DecisionNodeCard, option: OptionNodeCard, scope: ScopeNodeCard };
 
 interface DagCanvasProps {
   state: DashboardSnapshot;
   compareBranch?: Branch;
-  onSelectDecision: (id: string) => void;
-  selectedDecisionId?: string;
+  onSelectGraphNode: (id: string) => void;
+  selectedGraphNodeId?: string;
+  waitingDecisionId?: string;
+  clarifying?: boolean;
   compact?: boolean;
 }
 
-export function DagCanvas({ state, compareBranch, onSelectDecision, compact }: DagCanvasProps): ReactElement {
+export function DagCanvas({
+  state,
+  compareBranch,
+  onSelectGraphNode,
+  selectedGraphNodeId,
+  waitingDecisionId,
+  clarifying = false,
+  compact
+}: DagCanvasProps): ReactElement {
+  const scopeQuestion = activeClarificationQuestion(state.clarification);
+
   const changedIds = useMemo(() => {
     const ids = new Set<string>();
     if (!compareBranch) return ids;
@@ -32,49 +48,111 @@ export function DagCanvas({ state, compareBranch, onSelectDecision, compact }: D
     return new Set(state.decisions.map((node) => node.id).filter((id) => !invalidated.has(id) && id !== compareBranch.fromDecisionId));
   }, [compareBranch, state.decisions]);
 
-  const flow = useMemo(
-    () => layoutGraph(state.decisions, state.edges, state.pendingNodes, changedIds, dimmedIds),
-    [state.decisions, state.edges, state.pendingNodes, changedIds, dimmedIds]
-  );
+  const flow = useMemo(() => {
+    if (clarifying && scopeQuestion) {
+      const graph = layoutScopeGraph(scopeQuestion);
+      return {
+        ...graph,
+        nodes: graph.nodes.map((node) => ({
+          ...node,
+          data: {
+            ...node.data,
+            ...(node.type === "scope"
+              ? {
+                  needsInput: true,
+                  selected: node.id === selectedGraphNodeId
+                }
+              : {}),
+            ...(node.type === "option" ? { selected: node.id === selectedGraphNodeId } : {})
+          }
+        }))
+      };
+    }
+
+    const graph = layoutGraph(
+      state.decisions,
+      state.edges,
+      state.pendingNodes,
+      changedIds,
+      dimmedIds,
+      waitingDecisionId
+    );
+    return {
+      ...graph,
+      nodes: graph.nodes.map((node) => ({
+        ...node,
+        data: {
+          ...node.data,
+          ...(node.type === "decision"
+            ? {
+                needsInput: node.id === waitingDecisionId,
+                selected: node.id === selectedGraphNodeId
+              }
+            : {}),
+          ...(node.type === "option" ? { selected: node.id === selectedGraphNodeId } : {})
+        }
+      }))
+    };
+  }, [
+    clarifying,
+    scopeQuestion,
+    state.decisions,
+    state.edges,
+    state.pendingNodes,
+    changedIds,
+    dimmedIds,
+    waitingDecisionId,
+    selectedGraphNodeId
+  ]);
 
   const onNodeClick: NodeMouseHandler = (_event, node: Node) => {
-    if (!node.id.startsWith("pending_")) onSelectDecision(node.id);
+    if (node.id.startsWith("pending_")) return;
+    onSelectGraphNode(node.id);
   };
 
-  const empty = state.decisions.length === 0 && state.pendingNodes.length === 0;
+  const empty = !clarifying && state.decisions.length === 0 && state.pendingNodes.length === 0;
 
   if (compareBranch) {
     return (
       <div className={`grid min-h-0 ${compact ? "flex-[1.2]" : "flex-1"} grid-cols-2 gap-2 p-2`}>
         <CanvasPane title="Original" flow={flow} onNodeClick={onNodeClick} empty={empty} />
-        <BranchPane branch={compareBranch} onSelectDecision={onSelectDecision} />
+        <BranchPane branch={compareBranch} onSelectGraphNode={onSelectGraphNode} />
       </div>
     );
   }
 
   return (
     <div className={`flex min-h-0 ${compact ? "flex-[1.2]" : "flex-1"} flex-col p-2`}>
-      <CanvasPane title="Decision graph" flow={flow} onNodeClick={onNodeClick} empty={empty} />
+      <CanvasPane
+        title={clarifying ? "Scope check" : "Decision graph"}
+        flow={flow}
+        onNodeClick={onNodeClick}
+        empty={empty}
+        subtitle={clarifying && scopeQuestion ? scopeQuestion.context : undefined}
+      />
     </div>
   );
 }
 
 function CanvasPane({
   title,
+  subtitle,
   flow,
   onNodeClick,
   empty
 }: {
   title: string;
-  flow: ReturnType<typeof layoutGraph>;
+  subtitle?: string;
+  flow: ReturnType<typeof layoutGraph> | ReturnType<typeof layoutScopeGraph>;
   onNodeClick: NodeMouseHandler;
   empty: boolean;
 }): ReactElement {
   return (
     <section className="relative flex h-full min-h-[320px] flex-1 flex-col overflow-hidden rounded-xl border border-border bg-panel">
       {!empty ? (
-        <div className="absolute left-3 top-3 z-10 rounded-md bg-panel/90 px-2 py-0.5 text-[10px] font-medium text-muted backdrop-blur">
-          {title}
+        <div className="absolute left-3 top-3 z-10 max-w-sm rounded-md bg-panel/90 px-2.5 py-1 backdrop-blur">
+          <p className="text-[10px] font-medium text-muted">{title}</p>
+          {subtitle ? <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-ink">{subtitle}</p> : null}
         </div>
       ) : null}
       {empty ? (
@@ -102,18 +180,19 @@ function FlowCanvas({
   flow,
   onNodeClick
 }: {
-  flow: ReturnType<typeof layoutGraph>;
+  flow: ReturnType<typeof layoutGraph> | ReturnType<typeof layoutScopeGraph>;
   onNodeClick: NodeMouseHandler;
 }): ReactElement {
   const { fitView } = useReactFlow();
+  const graphSignature = flow.nodes.map((node) => `${node.id}:${node.type}`).join("|");
 
   useEffect(() => {
     if (flow.nodes.length === 0) return;
     const timer = window.setTimeout(() => {
-      void fitView({ padding: 0.25, duration: 250 });
+      void fitView({ padding: 0.2, duration: 250 });
     }, 50);
     return () => window.clearTimeout(timer);
-  }, [flow.nodes.length, flow.edges.length, fitView]);
+  }, [graphSignature, flow.edges.length, fitView]);
 
   return (
     <ReactFlow
@@ -122,17 +201,34 @@ function FlowCanvas({
       nodeTypes={nodeTypes}
       onNodeClick={onNodeClick}
       fitView
-      fitViewOptions={{ padding: 0.25 }}
+      fitViewOptions={{ padding: 0.2 }}
       proOptions={{ hideAttribution: true }}
       style={{ width: "100%", height: "100%" }}
     >
-      <Background color="#e5e5ea" gap={24} size={1} />
+      <Background color="hsl(var(--grid))" gap={24} size={1} />
       <Controls showInteractive={false} />
     </ReactFlow>
   );
 }
 
-function BranchPane({ branch, onSelectDecision }: { branch: Branch; onSelectDecision: (id: string) => void }): ReactElement {
+function BranchPane({
+  branch,
+  onSelectGraphNode
+}: {
+  branch: Branch;
+  onSelectGraphNode: (id: string) => void;
+}): ReactElement {
+  if (branch.decisions.length === 0) {
+    return (
+      <section className="relative flex h-full min-h-[320px] flex-1 flex-col overflow-hidden rounded-xl border border-accent/20 bg-panel">
+        <div className="absolute left-4 top-4 z-10 rounded-lg bg-accent/10 px-2.5 py-1 text-[11px] font-medium text-accent backdrop-blur">
+          Branch · {branch.newChoice}
+        </div>
+        <EmptyState title="Branch pending" description="Downstream decisions will appear here as the branch reruns." />
+      </section>
+    );
+  }
+
   const edges = branch.decisions.flatMap((node, index) =>
     index > 0 ? [{ from: branch.decisions[index - 1].id, to: node.id, kind: "declared" as const }] : []
   );
@@ -147,7 +243,7 @@ function BranchPane({ branch, onSelectDecision }: { branch: Branch; onSelectDeci
         <ReactFlowProvider>
           <FlowCanvas
             flow={flow}
-            onNodeClick={((_event, node: Node) => onSelectDecision(node.id)) as NodeMouseHandler}
+            onNodeClick={((_event, node: Node) => onSelectGraphNode(node.id)) as NodeMouseHandler}
           />
         </ReactFlowProvider>
       </div>

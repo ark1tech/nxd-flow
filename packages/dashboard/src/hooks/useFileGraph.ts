@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { FileGraphSnapshot } from "@autopilot/shared";
 
-export function useFileGraph(missionId?: string, branchId?: string, refreshKey = 0) {
+export function useFileGraph(missionId?: string, branchId?: string, refreshKey: string | number = 0) {
   const [graph, setGraph] = useState<FileGraphSnapshot>();
   const [loading, setLoading] = useState(false);
 

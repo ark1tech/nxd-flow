@@ -3,10 +3,10 @@ import { Handle, Position, type NodeProps } from "reactflow";
 import type { DagNodeData } from "../lib/layout";
 
 const tierStyles: Record<string, string> = {
-  low: "border-success/30 bg-white",
-  medium: "border-warning/40 bg-white",
-  high: "border-danger/40 bg-white",
-  critical: "border-danger/60 bg-white"
+  low: "border-success/30 bg-panel",
+  medium: "border-warning/40 bg-panel",
+  high: "border-danger/40 bg-panel",
+  critical: "border-danger/60 bg-panel"
 };
 
 function DecisionNodeCard({ data }: NodeProps<DagNodeData>): ReactElement {
@@ -21,6 +21,9 @@ function DecisionNodeCard({ data }: NodeProps<DagNodeData>): ReactElement {
         "w-56 rounded-2xl border px-3.5 py-2.5 shadow-card transition",
         tierClass,
         pending ? "animate-pulseSoft border-accent ring-2 ring-accent/20" : "",
+        data.needsInput ? "border-accent ring-2 ring-accent/35 shadow-float" : "",
+        data.selected && !data.needsInput ? "ring-2 ring-ink/20 shadow-card" : "",
+        data.selected && data.needsInput ? "ring-2 ring-accent" : "",
         changed ? "ring-2 ring-accent shadow-float" : "",
         dimmed ? "opacity-35" : ""
       ].join(" ")}
@@ -29,6 +32,7 @@ function DecisionNodeCard({ data }: NodeProps<DagNodeData>): ReactElement {
       <div className="mb-1 flex flex-wrap items-center gap-1.5">
         <span className="rounded-md bg-canvas px-1.5 py-0.5 text-[10px] font-medium capitalize text-muted">{data.tier}</span>
         {pending ? <span className="text-[10px] font-medium text-accent">Working…</span> : null}
+        {data.needsInput ? <span className="text-[10px] font-semibold text-accent">Input needed</span> : null}
         {changed ? <span className="text-[10px] font-medium text-accent">Changed</span> : null}
         {data.reviewed ? <span className="text-[10px] font-medium text-success">Reviewed</span> : null}
       </div>
