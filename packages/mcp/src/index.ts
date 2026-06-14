@@ -2,12 +2,13 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { createAutopilot } from "@autopilot/engine";
+import { createAutopilot, resolveWorkspaceRoot } from "@autopilot/engine";
 
 export { AutopilotMcpServer } from "@autopilot/engine";
 
 export function createAutopilotStdioServer(root = process.env.AUTOPILOT_ROOT ?? process.cwd()): McpServer {
-  const { store, engine } = createAutopilot(root);
+  const workspaceRoot = resolveWorkspaceRoot(root);
+  const { store, engine } = createAutopilot(workspaceRoot);
   const server = new McpServer({ name: "autopilot", version: "0.1.0" });
   const looseInput = z.object({}).passthrough();
 

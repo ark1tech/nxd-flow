@@ -4,6 +4,8 @@ import { dirname, join, relative, resolve } from "node:path";
 import type { FileGraphEdge, FileGraphNode, FileGraphSnapshot, WorktreeEntry, WorktreeFileStatus, WorktreeSnapshot } from "@autopilot/shared";
 
 const IGNORE_NAMES = new Set(["node_modules", ".git", "dist", ".DS_Store", "tsconfig.tsbuildinfo"]);
+const AUTOPILOT_INTERNAL_FILE =
+  /^(agent-runner|autopilot-mcp|autopilot-layout|blast-radius|config|dashboard-gateway|debt-meter|decision-gate|decision-store|edge-deriver|knowledge-store|loop-engine|profile-store|skills-store|worktree-manager|onboarding)(\.test)?\.(ts|js)$/;
 
 export class WorktreeManager {
   private scratchRoot?: string;
@@ -13,13 +15,13 @@ export class WorktreeManager {
     private readonly worktreeRoot: string
   ) {}
 
-  createScratchRepo(missionId: string): string {
+  createScratchRepo(missionId: string, sourceRoot = this.sourceRoot): string {
     const scratch = join(this.worktreeRoot, "scratch", missionId);
     rmSync(scratch, { recursive: true, force: true });
     mkdirSync(scratch, { recursive: true });
-    this.copySourceInto(scratch);
-    this.copyWorkspaceTsconfigBase();
-    this.linkDependenciesIfAvailable(scratch);
+    this.copySourceInto(scratch, sourceRoot);
+    this.copyWorkspaceTsconfigBase(sourceRoot);
+    this.linkDependenciesIfAvailable(scratch, sourceRoot);
     writeFileSync(join(scratch, ".gitignore"), "node_modules/\ndist/\n");
     this.writeFixtureVitestConfig(scratch);
     this.git(["init"], scratch);
@@ -42,8 +44,15 @@ export class WorktreeManager {
   fork(label: string, commitSha: string, cwd = this.mustScratchRoot()): string {
     mkdirSync(this.worktreeRoot, { recursive: true });
     const path = join(this.worktreeRoot, "branches", label);
-    rmSync(path, { recursive: true, force: true });
-    this.git(["worktree", "add", "-B", `autopilot/${label}`, path, commitSha], cwd);
+    const branchName = `autopilot/${label}`;
+
+    const existing = this.findWorktree(cwd, { path, branchName });
+    if (existing?.path === path && existsSync(join(path, ".git")) && this.isAtCommit(path, commitSha)) {
+      return path;
+    }
+
+    this.removeWorktree(cwd, { path, branchName });
+    this.git(["worktree", "add", "-B", branchName, path, commitSha], cwd);
     return path;
   }
 
@@ -215,6 +224,7 @@ export class WorktreeManager {
     const entries: WorktreeEntry[] = [];
     for (const name of readdirSync(dir).sort((a, b) => a.localeCompare(b))) {
       if (IGNORE_NAMES.has(name)) continue;
+      if (AUTOPILOT_INTERNAL_FILE.test(name)) continue;
       const absolute = join(dir, name);
       const path = relative(root, absolute).split("\\").join("/");
       const stat = statSync(absolute);
@@ -245,28 +255,28 @@ export class WorktreeManager {
     return this.scratchRoot;
   }
 
-  private copySourceInto(destination: string): void {
-    for (const entry of readdirSync(this.sourceRoot)) {
+  private copySourceInto(destination: string, sourceRoot = this.sourceRoot): void {
+    for (const entry of readdirSync(sourceRoot)) {
       if (entry === ".git" || entry === ".autopilot" || entry === "node_modules" || entry === "dist") continue;
-      cpSync(join(this.sourceRoot, entry), join(destination, entry), {
+      cpSync(join(sourceRoot, entry), join(destination, entry), {
         recursive: true,
         filter: (source) => !source.includes("/node_modules/") && !source.includes("/.git/") && !source.includes("/.autopilot/")
       });
     }
   }
 
-  private copyWorkspaceTsconfigBase(): void {
-    const candidate = resolve(this.sourceRoot, "..", "..", "tsconfig.base.json");
+  private copyWorkspaceTsconfigBase(sourceRoot = this.sourceRoot): void {
+    const candidate = resolve(sourceRoot, "..", "..", "tsconfig.base.json");
     if (existsSync(candidate)) {
       mkdirSync(this.worktreeRoot, { recursive: true });
       cpSync(candidate, join(this.worktreeRoot, "tsconfig.base.json"));
     }
-    const packageBase = resolve(dirname(this.sourceRoot), "tsconfig.base.json");
+    const packageBase = resolve(dirname(sourceRoot), "tsconfig.base.json");
     if (existsSync(packageBase)) cpSync(packageBase, join(this.worktreeRoot, "tsconfig.base.json"));
   }
 
-  private linkDependenciesIfAvailable(cwd: string): void {
-    const sourceModules = join(this.sourceRoot, "node_modules");
+  private linkDependenciesIfAvailable(cwd: string, sourceRoot = this.sourceRoot): void {
+    const sourceModules = join(sourceRoot, "node_modules");
     if (!existsSync(sourceModules) || existsSync(join(cwd, "node_modules"))) return;
     symlinkSync(sourceModules, join(cwd, "node_modules"), "dir");
   }
@@ -299,6 +309,63 @@ export class WorktreeManager {
         GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL ?? "autopilot@example.local"
       }
     });
+  }
+
+  private findWorktree(cwd: string, target: { path: string; branchName: string }): { path: string; branchName?: string } | undefined {
+    for (const entry of this.listWorktrees(cwd)) {
+      if (entry.path === target.path || entry.branchName === target.branchName) return entry;
+    }
+    return undefined;
+  }
+
+  private removeWorktree(cwd: string, target: { path: string; branchName: string }): void {
+    for (const entry of this.listWorktrees(cwd)) {
+      if (entry.path !== target.path && entry.branchName !== target.branchName) continue;
+      try {
+        this.git(["worktree", "remove", "--force", entry.path], cwd);
+      } catch {
+        rmSync(entry.path, { recursive: true, force: true });
+        try {
+          this.git(["worktree", "prune"], cwd);
+        } catch {
+          // Best effort cleanup for stale registrations.
+        }
+      }
+    }
+    rmSync(target.path, { recursive: true, force: true });
+    try {
+      this.git(["worktree", "prune"], cwd);
+    } catch {
+      // Ignore prune failures after manual cleanup.
+    }
+  }
+
+  private listWorktrees(cwd: string): Array<{ path: string; branchName?: string }> {
+    const output = this.git(["worktree", "list", "--porcelain"], cwd);
+    const entries: Array<{ path: string; branchName?: string }> = [];
+    let current: { path: string; branchName?: string } | undefined;
+    for (const line of output.split("\n")) {
+      if (line.startsWith("worktree ")) {
+        if (current) entries.push(current);
+        current = { path: line.slice("worktree ".length) };
+        continue;
+      }
+      if (!current) continue;
+      if (line.startsWith("branch refs/heads/")) {
+        current.branchName = line.slice("branch refs/heads/".length);
+      }
+    }
+    if (current) entries.push(current);
+    return entries;
+  }
+
+  private isAtCommit(cwd: string, commitSha: string): boolean {
+    try {
+      const head = this.git(["rev-parse", "HEAD"], cwd).trim();
+      return head === commitSha || head.startsWith(commitSha) || commitSha.startsWith(head);
+    } catch {
+      return false;
+    }
   }
 }
 

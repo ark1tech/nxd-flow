@@ -42,6 +42,24 @@ describe("WorktreeManager", () => {
     expect(readFileSync(join(branch, "server.ts"), "utf8")).toBe("export const answer = 2;\n");
     rmSync(dir, { recursive: true, force: true });
   });
+
+  it("reuses or replaces an existing branch worktree when fork is called again", () => {
+    const dir = mkdtempSync(join(tmpdir(), "autopilot-worktree-"));
+    const source = join(dir, "fixture");
+    const work = join(dir, "work");
+    writeFixture(source);
+    const manager = new WorktreeManager(source, work);
+    const scratch = manager.createScratchRepo("mission-3");
+    writeFileSync(join(scratch, "server.ts"), "export const answer = 3;\n");
+    const first = manager.checkpoint("decision-1", scratch);
+
+    const branchA = manager.fork("mission-3-branch", first);
+    const branchB = manager.fork("mission-3-branch", first);
+
+    expect(branchB).toBe(branchA);
+    expect(existsSync(join(branchB, "server.ts"))).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
 });
 
 function writeFixture(path: string): void {

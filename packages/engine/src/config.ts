@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 export type AutopilotMode = "live" | "mock";
 
@@ -28,8 +28,8 @@ export function loadAutopilotConfig(root = process.cwd()): AutopilotConfig {
 }
 
 function loadDotEnv(root: string): void {
-  const envPath = join(root, ".env");
-  if (!existsSync(envPath)) return;
+  const envPath = findEnvFile(root);
+  if (!envPath) return;
   for (const line of readFileSync(envPath, "utf8").split("\n")) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
@@ -46,4 +46,15 @@ function numberFromEnv(key: string, fallback: number): number {
   if (!value) return fallback;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function findEnvFile(start: string): string | undefined {
+  let current = resolve(start);
+  while (true) {
+    const candidate = join(current, ".env");
+    if (existsSync(candidate)) return candidate;
+    const parent = dirname(current);
+    if (parent === current) return undefined;
+    current = parent;
+  }
 }

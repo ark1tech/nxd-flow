@@ -11,7 +11,7 @@ export { deriveFileOverlapEdges } from "./edge-deriver.js";
 export { KnowledgeStore } from "./knowledge-store.js";
 export { LoopEngine } from "./loop-engine.js";
 export { ProfileStore } from "./profile-store.js";
-export { ensureAutopilotLayout, resolvePaths } from "./paths.js";
+export { ensureAutopilotLayout, resolveMissionSource, resolveMissionSourceForIdea, resolvePaths, resolveWorkspaceRoot } from "./paths.js";
 export { WorktreeManager } from "./worktree-manager.js";
 export { SkillsStore } from "./skills-store.js";
 
@@ -24,11 +24,12 @@ import { DecisionStore } from "./decision-store.js";
 import { KnowledgeStore } from "./knowledge-store.js";
 import { LoopEngine } from "./loop-engine.js";
 import { ProfileStore } from "./profile-store.js";
-import { ensureAutopilotLayout } from "./paths.js";
+import { ensureAutopilotLayout, resolveMissionSourceForIdea } from "./paths.js";
 
-export function createAutopilot(root = process.cwd()): { store: DecisionStore; engine: LoopEngine; gateway: DashboardGateway } {
+export function createAutopilot(startRoot = process.cwd()): { store: DecisionStore; engine: LoopEngine; gateway: DashboardGateway } {
+  const paths = ensureAutopilotLayout(startRoot);
+  const root = paths.root;
   const config = loadAutopilotConfig(root);
-  const paths = ensureAutopilotLayout(root);
   const store = new DecisionStore(paths.db);
   const profile = new ProfileStore(paths.profile, paths.profileHistory);
   const knowledge = new KnowledgeStore(paths.knowledge, root);

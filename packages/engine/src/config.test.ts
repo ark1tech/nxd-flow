@@ -36,4 +36,18 @@ describe("loadAutopilotConfig", () => {
     expect(config.mode).toBe("mock");
     rmSync(dir, { recursive: true, force: true });
   });
+
+  it("finds a parent .env when started from a package subdirectory", () => {
+    const root = mkdtempSync(join(tmpdir(), "autopilot-config-root-"));
+    const pkg = join(root, "packages", "engine");
+    writeFileSync(join(root, ".env"), "CURSOR_API_KEY=crsr_nested_key\n", { flag: "w" });
+    delete process.env.CURSOR_API_KEY;
+    delete process.env.AUTOPILOT_MODE;
+
+    const config = loadAutopilotConfig(pkg);
+
+    expect(config.cursorApiKey).toBe("crsr_nested_key");
+    expect(config.mode).toBe("live");
+    rmSync(root, { recursive: true, force: true });
+  });
 });
