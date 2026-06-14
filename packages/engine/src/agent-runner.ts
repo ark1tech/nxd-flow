@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AgentActivity, AgentRole, DecisionNode, HarnessRecord, MissionStep, Surface } from "@autopilot/shared";
+import type { AgentActivity, AgentRole, ClarificationQuestion, DecisionNode, HarnessRecord, MissionStep, Surface } from "@autopilot/shared";
+import { normalizeClarificationQuestions } from "@autopilot/shared";
 import { loadAutopilotConfig, type AutopilotMode } from "./config.js";
 
 export interface HarnessContext {
@@ -28,7 +29,7 @@ export interface AgentRunResult {
   text: string;
   proposedDecision?: Omit<DecisionNode, "id" | "createdAt" | "updatedAt" | "reviewed">;
   plannedSteps?: MissionStep[];
-  scopeResult?: { ready: true } | { ready: false; questions: string[] };
+  scopeResult?: { ready: true } | { ready: false; questions: ClarificationQuestion[] };
 }
 
 export interface InlineMcpServerConfig {
@@ -228,15 +229,37 @@ export class AgentRunner {
       const result = await run.wait();
       return String(result.result ?? result.text ?? "");
     }
+
+    let thinkingBuffer = "";
+    let lastThinkingEmit = 0;
+
+    const flushThinking = (force = false): void => {
+      const trimmed = thinkingBuffer.trim();
+      if (!trimmed) return;
+      const now = Date.now();
+      if (!force && now - lastThinkingEmit < 120 && trimmed.length < 80) return;
+      emit({ kind: "thinking", message: trimmed, stepId: request.stepId });
+      lastThinkingEmit = now;
+    };
+
     for await (const event of run.stream()) {
-      const activity = activityFromStreamEvent(event, request.stepName);
-      if (activity) emit(activity);
-      if (event.type === "assistant") {
-        for (const block of event.message?.content ?? []) {
-          if (block.type === "text" && block.text) chunks.push(block.text);
+      if (event.type !== "assistant") continue;
+      for (const block of event.message?.content ?? []) {
+        if (block.type === "text" && block.text) {
+          chunks.push(block.text);
+          if (request.role !== "scoper" && request.role !== "planner") {
+            thinkingBuffer += block.text;
+            flushThinking();
+          }
+          continue;
         }
+        flushThinking(true);
+        const activity = activityFromToolBlock(block, request.stepName);
+        if (activity) emit(activity);
       }
     }
+
+    flushThinking(true);
     return chunks.join("");
   }
 
@@ -275,12 +298,9 @@ export class AgentRunner {
 
   private mockScope(request: AgentRunRequest): AgentRunResult {
     const started = Date.now();
-    request.onActivity?.({ kind: "planning", message: "[Offline] Checking scope…", missionId: request.missionId });
-    const idea = request.prompt;
-    const underspecified = /website|site|app|build me|make me/i.test(idea) && !/\b(next|react|vue|svelte|landing|portfolio|blog|ecommerce|store)\b/i.test(idea);
-    const result = underspecified
-      ? { ready: false as const, questions: ["What kind of website do you want (landing page, portfolio, blog, store)?", "Any stack preference (Next.js, plain HTML, etc.)?"] }
-      : { ready: true as const };
+    request.onActivity?.({ kind: "planning", message: "Checking scope…", missionId: request.missionId });
+    const idea = extractIdeaFromScopePrompt(request.prompt);
+    const result = mockScopeResultForIdea(idea);
     const text = JSON.stringify(result);
     this.recordHarness(request, request.prompt, text, Date.now() - started, true);
     return { status: "finished", text, scopeResult: result };
@@ -473,7 +493,67 @@ function materializeMockCode(request: AgentRunRequest): void {
     );
     return;
   }
+  if (request.stepName.startsWith("site-")) {
+    writeFileSync(join(src, `${request.stepName}.ts`), `export const autopilotStep = ${JSON.stringify(request.stepName)};\n`);
+    writeSitePreview(request.cwd, request.prompt, request.stepName);
+    return;
+  }
   writeFileSync(join(src, `${request.stepName}.ts`), `export const autopilotStep = ${JSON.stringify(request.stepName)};\n`);
+}
+
+function writeSitePreview(cwd: string, prompt: string, stepName: string): void {
+  const publicDir = join(cwd, "public");
+  mkdirSync(publicDir, { recursive: true });
+  const ideaMatch = prompt.match(/Mission idea:\s*(.+)/i);
+  const title = ideaMatch?.[1]?.trim() ?? "For You";
+  const pages =
+    stepName === "site-pages" || stepName === "site-auth"
+      ? ["Home", "About", "Gallery", "Contact"]
+      : ["Home", "About", "Gallery", "Contact"];
+  const stack = /html/i.test(prompt) ? "html" : /vite/i.test(prompt) ? "vite-react" : "next";
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${escapeHtml(title)}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; background: linear-gradient(160deg, #fff5f7 0%, #f5f5f7 45%, #eef4ff 100%); color: #1d1d1f; min-height: 100vh; }
+    nav { display: flex; gap: 1.25rem; padding: 1rem 1.5rem; position: sticky; top: 0; backdrop-filter: blur(12px); background: rgba(255,255,255,0.75); border-bottom: 1px solid #e5e5ea; }
+    nav a { color: #86868b; text-decoration: none; font-size: 0.875rem; font-weight: 500; }
+    nav a.active, nav a:hover { color: #007aff; }
+    main { max-width: 720px; margin: 0 auto; padding: 3rem 1.5rem 4rem; }
+    h1 { font-size: 2.25rem; font-weight: 700; letter-spacing: -0.03em; line-height: 1.1; }
+    p.lead { margin-top: 1rem; font-size: 1.125rem; line-height: 1.6; color: #515154; }
+    .badge { display: inline-block; margin-top: 1.5rem; padding: 0.35rem 0.75rem; border-radius: 999px; background: #007aff14; color: #007aff; font-size: 0.75rem; font-weight: 600; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1rem; margin-top: 2.5rem; }
+    .card { background: white; border: 1px solid #e5e5ea; border-radius: 16px; padding: 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+    .card h2 { font-size: 0.95rem; margin-bottom: 0.35rem; }
+    .card p { font-size: 0.8rem; color: #86868b; line-height: 1.45; }
+    footer { text-align: center; padding: 2rem; font-size: 0.75rem; color: #86868b; }
+  </style>
+</head>
+<body>
+  <nav>${pages.map((page, index) => `<a href="#" class="${index === 0 ? "active" : ""}">${page}</a>`).join("")}</nav>
+  <main>
+    <span class="badge">${stack === "next" ? "Next.js preview" : stack === "html" ? "Static HTML" : "Vite + React"} · live scratch</span>
+    <h1>${escapeHtml(title)}</h1>
+    <p class="lead">A personal site taking shape in the scratch worktree. Decisions for stack, pages, and auth land here as the agent works.</p>
+    <div class="grid">
+      <div class="card"><h2>Stack</h2><p>${stepName === "site-stack" ? "Choosing rendering approach…" : stack}</p></div>
+      <div class="card"><h2>Pages</h2><p>${pages.join(" · ")}</p></div>
+      <div class="card"><h2>Auth</h2><p>${stepName === "site-auth" ? "Google sign-in planned" : "Optional"}</p></div>
+    </div>
+  </main>
+  <footer>Autopilot scratch preview · updates as steps complete</footer>
+</body>
+</html>`;
+  writeFileSync(join(publicDir, "index.html"), html);
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 function scriptedDecision(
@@ -541,11 +621,11 @@ function parsePlan(text: string): MissionStep[] | undefined {
   }));
 }
 
-function parseScope(text: string): { ready: true } | { ready: false; questions: string[] } | undefined {
-  const parsed = extractJson(text) as { ready?: boolean; questions?: string[] } | undefined;
+function parseScope(text: string): { ready: true } | { ready: false; questions: ClarificationQuestion[] } | undefined {
+  const parsed = extractJson(text) as { ready?: boolean; questions?: unknown } | undefined;
   if (!parsed || typeof parsed.ready !== "boolean") return undefined;
   if (parsed.ready) return { ready: true };
-  const questions = (parsed.questions ?? []).filter((q) => q.trim().length > 0).slice(0, 3);
+  const questions = normalizeClarificationQuestions(parsed.questions);
   if (questions.length === 0) return undefined;
   return { ready: false, questions };
 }
@@ -574,7 +654,7 @@ function strictRetryPrompt(kind: "decision" | "plan" | "scoping", prior: string)
     return `Your previous response was not valid JSON. Return ONLY one fenced JSON block:\n\`\`\`json\n{"steps":[{"id":"step-1","name":"kebab-name","description":"what this step decides"}]}\n\`\`\`\nPrevious output:\n${prior.slice(0, 500)}`;
   }
   if (kind === "scoping") {
-    return `Return ONLY one fenced JSON block:\n\`\`\`json\n{"ready":true}\n\`\`\`\nor\n\`\`\`json\n{"ready":false,"questions":["one question"]}\n\`\`\`\nPrevious output:\n${prior.slice(0, 500)}`;
+    return `Return ONLY one fenced JSON block:\n\`\`\`json\n{"ready":true}\n\`\`\`\nor\n\`\`\`json\n{"ready":false,"questions":[{"title":"Short title","context":"Why this matters","options":[{"id":"a","label":"Option A","pros":["win"],"cons":["cost"]},{"id":"b","label":"Option B","pros":["win"],"cons":["cost"]}],"recommendation":"a"}]}\n\`\`\`\nPrevious output:\n${prior.slice(0, 500)}`;
   }
   return `Your previous response was not valid JSON. Return ONLY one fenced JSON block matching:\n${DECISION_JSON_SCHEMA}\nEach option needs at least one pro and one con.\nPrevious output:\n${prior.slice(0, 500)}`;
 }
@@ -587,7 +667,7 @@ function mockStepsForIdea(idea: string): MissionStep[] {
       { id: "persistence", name: "auth-persistence", description: "Choose how token/session state is represented" }
     ];
   }
-  if (/website|site|landing|portfolio|blog/i.test(idea)) {
+  if (/website|site|landing|portfolio|blog|dating|bumble|tinder|web app/i.test(idea)) {
     return [
       { id: "stack", name: "site-stack", description: "Choose the site stack and rendering approach" },
       { id: "pages", name: "site-pages", description: "Decide core pages and navigation structure" },
@@ -606,28 +686,108 @@ function extractIdeaFromPlanPrompt(prompt: string): string {
   return match?.[1]?.trim() ?? prompt;
 }
 
-function activityFromStreamEvent(event: StreamEvent, stepName: string): AgentActivity | undefined {
-  if (event.type !== "assistant") return undefined;
-  for (const block of event.message?.content ?? []) {
-    if (block.type === "text" && block.text) {
-      const text = block.text.trim();
-      if (!text) continue;
-      if (/test|vitest|tsc/i.test(text)) return { kind: "testing", message: `Running checks for ${stepName}` };
-      if (/edit|write|update|create/i.test(text)) return { kind: "editing", message: `Editing code for ${stepName}` };
-      return { kind: "thinking", message: text.slice(0, 120) };
-    }
-    if (block.type === "tool_use" || block.name) {
-      const name = block.name ?? "tool";
-      if (/read|edit|write|search/i.test(name)) {
-        const input = block.input as { path?: string; file?: string } | undefined;
-        const file = input?.path ?? input?.file;
-        return { kind: "editing", message: `${name} ${file ?? ""}`.trim(), file };
-      }
-      if (/test|shell|terminal/i.test(name)) return { kind: "testing", message: `Running ${name}` };
-      return { kind: "status", message: `Using ${name}` };
-    }
+function extractIdeaFromScopePrompt(prompt: string): string {
+  return extractIdeaFromPlanPrompt(prompt);
+}
+
+function mockScopeResultForIdea(idea: string): { ready: true } | { ready: false; questions: ClarificationQuestion[] } {
+  if (/dating|bumble|tinder|match/i.test(idea)) {
+    return {
+      ready: false,
+      questions: [
+        {
+          title: "MVP scope for the dating app",
+          context:
+            "A Bumble-like product spans profiles, matching, messaging, and moderation. We need to know what ships in v1 versus what can wait so planning stays bounded.",
+          options: [
+            {
+              id: "core-loop",
+              label: "Profiles + swipe/match + chat",
+              pros: ["Core loop demoable quickly", "Enough to validate UX"],
+              cons: ["Women-message-first rule needs extra product work"]
+            },
+            {
+              id: "full-mvp",
+              label: "Full MVP with filters + women-message-first",
+              pros: ["Closer to Bumble's differentiator", "More realistic product story"],
+              cons: ["Much larger scope for v1", "More backend and policy work"]
+            },
+            {
+              id: "ui-prototype",
+              label: "UI prototype only (mock data, no backend)",
+              pros: ["Fastest path to a preview", "Good for design exploration"],
+              cons: ["No real auth, persistence, or matching logic"]
+            }
+          ],
+          recommendation: "core-loop"
+        }
+      ]
+    };
   }
-  return undefined;
+
+  const underspecified =
+    /website|site|app|build me|make me/i.test(idea) &&
+    !/\b(next|react|vue|svelte|landing|portfolio|blog|ecommerce|store|supabase|postgres)\b/i.test(idea);
+  if (underspecified) {
+    return {
+      ready: false,
+      questions: [
+        {
+          title: "What kind of build is this?",
+          context: "The prompt describes an app or site but not the delivery shape. That affects stack, hosting, and how many steps we plan.",
+          options: [
+            {
+              id: "landing",
+              label: "Marketing landing page",
+              pros: ["Simple static or SSR stack", "Fast preview"],
+              cons: ["No authenticated product surface"]
+            },
+            {
+              id: "web-app",
+              label: "Interactive web app with auth/data",
+              pros: ["Room to grow into a real product", "Matches most demo missions"],
+              cons: ["Needs backend and auth decisions early"]
+            },
+            {
+              id: "static-site",
+              label: "Static personal site (HTML or SPA)",
+              pros: ["Zero backend setup", "Easy to host"],
+              cons: ["Limited dynamic behavior"]
+            }
+          ],
+          recommendation: "web-app"
+        }
+      ]
+    };
+  }
+
+  return { ready: true };
+}
+
+type StreamContentBlock = NonNullable<NonNullable<StreamEvent["message"]>["content"]>[number];
+
+function activityFromToolBlock(block: StreamContentBlock, stepName: string): AgentActivity | undefined {
+  if (block.type !== "tool_use" && !block.name) return undefined;
+  const name = block.name ?? "tool";
+  const input = block.input as { path?: string; file?: string; command?: string } | undefined;
+  const file = input?.path ?? input?.file;
+  const shortFile = file ? file.split("/").slice(-2).join("/") : undefined;
+
+  if (/^read/i.test(name)) {
+    return { kind: "editing", message: shortFile ? `Reading ${shortFile}` : `Reading files for ${stepName}`, file };
+  }
+  if (/edit|write|str_replace|apply_patch/i.test(name)) {
+    return { kind: "editing", message: shortFile ? `Editing ${shortFile}` : `Editing code for ${stepName}`, file };
+  }
+  if (/search|grep|glob|list/i.test(name)) {
+    return { kind: "status", message: shortFile ? `Searching ${shortFile}` : `Searching codebase for ${stepName}` };
+  }
+  if (/test|vitest|jest/i.test(name)) return { kind: "testing", message: `Running tests for ${stepName}` };
+  if (/shell|terminal|bash/i.test(name)) {
+    const cmd = input?.command?.trim();
+    return { kind: "testing", message: cmd ? `Running \`${cmd.slice(0, 60)}\`` : `Running command for ${stepName}` };
+  }
+  return { kind: "status", message: `Using ${name}` };
 }
 
 function isCursorAgentError(error: unknown): error is { message: string; isRetryable?: boolean } {
@@ -646,6 +806,7 @@ function humanStepLabel(stepName: string): string {
     "site-stack": "Choosing site stack…",
     "site-pages": "Planning pages…",
     "site-auth": "Planning Google auth integration…",
+    "follow-up": "Working on follow-up…",
     "mission-plan": "Planning architecture…",
     "mission-implementation": "Implementing feature…",
     "mission-handoff": "Writing handoff…"

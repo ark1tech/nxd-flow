@@ -2,7 +2,8 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { nanoid } from "nanoid";
-import type { AgentActivity, Branch, ClarificationState, DecisionNode, EngineEvent, FileGraphSnapshot, HarnessRecord, KnowledgeFact, Mission, MissionStep, MissionSummary, PendingNode, SkillRole, SkillsSnapshot, WorktreeSnapshot } from "@autopilot/shared";
+import type { AgentActivity, Branch, ClarificationState, DecisionNode, EngineEvent, FileGraphSnapshot, HarnessRecord, KnowledgeFact, Mission, MissionMessage, MissionStep, MissionSummary, PendingNode, PreviewInfo, SkillRole, SkillsSnapshot, WorktreeSnapshot } from "@autopilot/shared";
+import { clarificationAnswerLabel, formatClarificationQuestion, normalizeClarificationState } from "@autopilot/shared";
 import { AgentRunner, type HarnessContext } from "./agent-runner.js";
 import { AutopilotMcpServer } from "./autopilot-mcp.js";
 import { BlastRadiusClassifier } from "./blast-radius.js";
@@ -12,7 +13,9 @@ import { deriveFileOverlapEdges, type DecisionArtifact } from "./edge-deriver.js
 import type { KnowledgeStore } from "./knowledge-store.js";
 import type { ProfileStore } from "./profile-store.js";
 import type { AutopilotPaths } from "./paths.js";
+import { resolveMissionSource, resolveMissionSourceForIdea } from "./paths.js";
 import { SkillsStore } from "./skills-store.js";
+import { buildPreviewInfo, readPreviewFile } from "./preview.js";
 import { WorktreeManager } from "./worktree-manager.js";
 
 type EventHandler = (event: EngineEvent, extras?: { activity?: AgentActivity; pending?: PendingNode; clearPending?: string }) => void;
@@ -68,7 +71,8 @@ export class LoopEngine {
   }
 
   getClarification(missionId: string): ClarificationState | undefined {
-    return this.store.cacheGet<ClarificationState>(clarificationKey(missionId));
+    const raw = this.store.cacheGet<ClarificationState>(clarificationKey(missionId));
+    return raw ? normalizeClarificationState(raw) : undefined;
   }
 
   getSkills(): SkillsSnapshot {
@@ -91,6 +95,87 @@ export class LoopEngine {
     const cursor = this.store.cacheGet<MissionCursor>(cursorKey(missionId));
     if (!cursor) return undefined;
     return { missionId, steps: cursor.steps };
+  }
+
+  getMessages(missionId: string): MissionMessage[] {
+    return this.store.cacheGet<MissionCursor>(cursorKey(missionId))?.messages ?? [];
+  }
+
+  getPreviewInfo(missionId: string, branchId?: string, port = 4317): PreviewInfo {
+    const snapshot = this.getWorktreeSnapshot(missionId, branchId);
+    return buildPreviewInfo(missionId, snapshot.root, branchId, port);
+  }
+
+  readPreviewAsset(missionId: string, requestPath: string, branchId?: string): { path: string; content: Buffer; contentType: string } {
+    const snapshot = this.getWorktreeSnapshot(missionId, branchId);
+    return readPreviewFile(snapshot.root, requestPath);
+  }
+
+  async sendMessage(
+    missionId: string,
+    text: string,
+    options: { live?: boolean; background?: boolean; autoAnswer?: boolean } = {}
+  ): Promise<{ mission: Mission; decisions: DecisionNode[]; waiting?: DecisionNode; clarification?: ClarificationState }> {
+    const trimmed = text.trim();
+    if (!trimmed) throw new Error("Message is required");
+    const mission = this.store.getMission(missionId);
+    if (!mission) throw new Error(`Mission not found: ${missionId}`);
+
+    const clarification = this.getClarification(missionId);
+    if (clarification) {
+      return this.answerClarification(missionId, trimmed, options);
+    }
+
+    const cursor = this.mustCursor(missionId);
+    const message: MissionMessage = {
+      id: `msg_${nanoid(8)}`,
+      missionId,
+      role: "user",
+      text: trimmed,
+      createdAt: new Date().toISOString()
+    };
+    cursor.messages = [...(cursor.messages ?? []), message];
+    if (options.live !== undefined) cursor.live = options.live;
+    this.store.cacheSet(cursorKey(missionId), cursor);
+    this.pushActivity({ kind: "status", message: trimmed, missionId });
+
+    if (mission.status === "running") {
+      throw new Error("Autopilot is still running — wait for the current step to finish.");
+    }
+
+    if (mission.status === "waiting" && cursor.pendingDecisionId) {
+      this.emitLatest();
+      return {
+        mission,
+        decisions: this.store.listMainDecisions(missionId),
+        waiting: this.store.getDecision(cursor.pendingDecisionId)
+      };
+    }
+
+    const followUpStep: MissionStep = {
+      id: `followup-${nanoid(6)}`,
+      name: "follow-up",
+      description: trimmed
+    };
+    cursor.steps = [...cursor.steps, followUpStep];
+    cursor.index = cursor.steps.length - 1;
+    cursor.pendingDecisionId = undefined;
+    this.store.cacheSet(cursorKey(missionId), cursor);
+    this.store.updateMissionStatus(missionId, "running");
+    this.emitLatest();
+
+    if (options.background) {
+      void this.runUntilPauseOrDone(missionId, { autoAnswer: Boolean(options.autoAnswer) }).catch((error) => {
+        this.store.updateMissionStatus(missionId, "failed");
+        this.pushActivity({
+          kind: "status",
+          message: error instanceof Error ? error.message : String(error),
+          missionId
+        });
+      });
+      return { mission: this.store.getMission(missionId)!, decisions: this.store.listMainDecisions(missionId) };
+    }
+    return this.runUntilPauseOrDone(missionId, { autoAnswer: Boolean(options.autoAnswer) });
   }
 
   listBranches(missionId?: string): Branch[] {
@@ -185,7 +270,7 @@ export class LoopEngine {
   ): Promise<{ mission: Mission; decisions: DecisionNode[]; waiting?: DecisionNode; clarification?: ClarificationState }> {
     this.resetRuntimeState();
     const mission = this.store.createMission(idea);
-    const scratchRoot = this.worktrees.createScratchRepo(mission.id);
+    const scratchRoot = this.worktrees.createScratchRepo(mission.id, resolveMissionSourceForIdea(this.paths.root, idea));
     this.knowledge.setRepoRoot(scratchRoot);
     this.emitLatest();
     this.store.updateMissionStatus(mission.id, "running");
@@ -197,7 +282,16 @@ export class LoopEngine {
       steps: [],
       index: 0,
       live,
-      scratchRoot
+      scratchRoot,
+      messages: [
+        {
+          id: `msg_${nanoid(8)}`,
+          missionId: mission.id,
+          role: "user",
+          text: idea,
+          createdAt: new Date().toISOString()
+        }
+      ]
     });
 
     const scope = await this.runScope(mission.id, idea, scratchRoot, live);
@@ -228,7 +322,14 @@ export class LoopEngine {
     }
 
     const cursor = this.mustCursor(missionId);
-    const scopedIdea = [cursor.idea, ...clarification.answers.map((item, index) => `Q: ${clarification.questions[index]}\nA: ${item}`)].join("\n");
+    const scopedIdea = [
+      cursor.idea,
+      ...clarification.answers.map((item, index) => {
+        const question = clarification.questions[index];
+        if (!question) return `A: ${item}`;
+        return `Q: ${formatClarificationQuestion(question)}\nContext: ${question.context}\nA: ${clarificationAnswerLabel(question, item)}`;
+      })
+    ].join("\n");
     cursor.scopedIdea = scopedIdea;
     this.store.cacheSet(cursorKey(missionId), cursor);
     this.store.cacheDelete(clarificationKey(missionId));
@@ -475,12 +576,12 @@ export class LoopEngine {
       throw new Error(result.text || "Scope check failed");
     }
     if (result.scopeResult.ready) return { status: "ready" };
-    const clarification: ClarificationState = {
+    const clarification: ClarificationState = normalizeClarificationState({
       missionId,
       questions: result.scopeResult.questions,
       answers: [],
       currentIndex: 0
-    };
+    });
     this.store.cacheSet(clarificationKey(missionId), clarification);
     this.store.updateMissionStatus(missionId, "waiting");
     this.emit(this.store.addEvent("clarification.requested", missionId, clarification));
@@ -510,10 +611,15 @@ export class LoopEngine {
     return [
       "You are the Autopilot scoper. Decide if this mission idea is specific enough to plan.",
       `Mission idea: ${idea}`,
-      "Return exactly one JSON block.",
+      "Return exactly one fenced JSON block.",
       'If ready to plan: {"ready":true}',
-      'If underspecified: {"ready":false,"questions":["one clarifying question","optional second"]}',
-      "Ask at most 3 questions. Only ask about missing facts — not things already in the prompt."
+      "If underspecified, ask ONE question at a time with structured options (grill format):",
+      `{"ready":false,"questions":[{"title":"Short decision title","context":"2-4 sentences: what is missing, why it matters, grounded in the prompt","options":[{"id":"a","label":"Option name","pros":["concrete win"],"cons":["honest cost"]},{"id":"b","label":"Option name","pros":["..."], "cons":["..."]}],"recommendation":"a"}]}`,
+      "Rules:",
+      "- Ask at most 1 question per response (sequential clarification).",
+      "- Only ask about missing facts — not things already in the prompt.",
+      "- Every question needs at least 2 options with pros and cons. Always commit to recommendation.",
+      "- Do not ask bare open-ended questions without options."
     ].join("\n");
   }
 
@@ -726,7 +832,17 @@ export class LoopEngine {
   }
 
   private pushActivity(activity: AgentActivity): void {
-    this.activities = [...this.activities.slice(-49), activity];
+    const last = this.activities.at(-1);
+    if (
+      activity.kind === "thinking" &&
+      last?.kind === "thinking" &&
+      last.missionId === activity.missionId &&
+      last.stepId === activity.stepId
+    ) {
+      this.activities = [...this.activities.slice(0, -1), activity];
+    } else {
+      this.activities = [...this.activities.slice(-49), activity];
+    }
     this.emit(this.store.addEvent("agent.activity", activity.missionId, activity), { activity });
   }
 
@@ -802,6 +918,7 @@ interface MissionCursor {
   live: boolean;
   scratchRoot: string;
   pendingDecisionId?: string;
+  messages?: MissionMessage[];
 }
 
 function cursorKey(missionId: string): string {
@@ -848,11 +965,6 @@ function walkFiles(dir: string): string[] {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function resolveMissionSource(root: string): string {
-  const fixture = join(root, "fixtures", "ts-service");
-  return existsSync(fixture) ? fixture : root;
 }
 
 function surfacesFromChangedFiles(files: string[]): import("@autopilot/shared").Surface[] {

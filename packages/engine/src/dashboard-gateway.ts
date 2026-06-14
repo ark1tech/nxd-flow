@@ -67,6 +67,9 @@ export class DashboardGateway {
       this.broadcastState();
       res.json({ ok: true });
     });
+    this.app.get("/api/missions/:id/clarification", (req, res) => {
+      res.json({ clarification: this.engine.getClarification(req.params.id) ?? null });
+    });
     this.app.post("/api/missions/:id/clarify", async (req, res, next) => {
       try {
         const answer = String(req.body?.answer ?? "").trim();
@@ -93,6 +96,45 @@ export class DashboardGateway {
       try {
         const branchId = typeof req.query.branchId === "string" ? req.query.branchId : undefined;
         res.json(this.engine.getFileGraph(req.params.id, branchId));
+      } catch (error) {
+        next(error);
+      }
+    });
+    this.app.get("/api/missions/:id/preview", (req, res, next) => {
+      try {
+        const branchId = typeof req.query.branchId === "string" ? req.query.branchId : undefined;
+        res.json(this.engine.getPreviewInfo(req.params.id, branchId));
+      } catch (error) {
+        next(error);
+      }
+    });
+    this.app.post("/api/missions/:id/message", async (req, res, next) => {
+      try {
+        const text = String(req.body?.text ?? req.body?.message ?? "").trim();
+        if (!text) throw new Error("Message is required");
+        if (req.body?.background !== false) {
+          void this.engine
+            .sendMessage(req.params.id, text, { live: req.body?.live, background: true })
+            .then(() => this.broadcastState())
+            .catch((error) => next(error));
+          res.json({ ok: true });
+          return;
+        }
+        const result = await this.engine.sendMessage(req.params.id, text, { live: req.body?.live, background: false });
+        this.broadcastState();
+        res.json(result);
+      } catch (error) {
+        next(error);
+      }
+    });
+    this.app.get(/^\/preview\/([^/]+)\/?(.*)$/, (req, res, next) => {
+      try {
+        const missionId = req.params[0];
+        const branchId = typeof req.query.branchId === "string" ? req.query.branchId : undefined;
+        const assetPath = req.params[1] || "index.html";
+        const asset = this.engine.readPreviewAsset(missionId, assetPath, branchId);
+        res.setHeader("content-type", asset.contentType);
+        res.send(asset.content);
       } catch (error) {
         next(error);
       }
@@ -216,8 +258,28 @@ export class DashboardGateway {
     const latestMission = missions.at(-1);
     const plan = latestMission ? this.engine.getPlan(latestMission.id) : undefined;
     const waitingMission = missions.find((mission) => mission.status === "waiting");
-    const clarification = waitingMission ? this.engine.getClarification(waitingMission.id) : undefined;
+    const clarifications = missions
+      .filter((mission) => mission.status === "waiting")
+      .map((mission) => this.engine.getClarification(mission.id))
+      .filter((item): item is NonNullable<typeof item> => Boolean(item));
+    const clarification =
+      clarifications.find((item) => item.missionId === waitingMission?.id) ?? clarifications.at(-1);
     const harnessRecords = missions.flatMap((mission) => this.engine.getHarnessRecords(mission.id));
+    const messages = missions.flatMap((mission) => {
+      try {
+        return this.engine.getMessages(mission.id);
+      } catch {
+        return [];
+      }
+    });
+    let preview;
+    if (latestMission) {
+      try {
+        preview = this.engine.getPreviewInfo(latestMission.id);
+      } catch {
+        preview = undefined;
+      }
+    }
     return {
       missions,
       decisions: this.store.listMainDecisions(),
@@ -228,6 +290,9 @@ export class DashboardGateway {
       activities: this.engine.getActivities(),
       harnessRecords,
       clarification,
+      clarifications,
+      messages,
+      preview,
       plan,
       trainingWheels: this.engine.generateOnboardingQuestions("").trainingWheels,
       profileRules: this.engine.profileRules(),
