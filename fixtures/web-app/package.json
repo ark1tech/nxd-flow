@@ -1,0 +1,9 @@
+{
+  "name": "@autopilot/fixture-web-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npx --yes serve public -p 3000"
+  }
+}
