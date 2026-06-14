@@ -108,11 +108,106 @@ export interface HarnessRecord {
   createdAt: string;
 }
 
+export interface ClarificationOption {
+  id: string;
+  label: string;
+  pros?: string[];
+  cons?: string[];
+}
+
+export interface ClarificationQuestion {
+  title: string;
+  context: string;
+  options: ClarificationOption[];
+  recommendation: string;
+}
+
 export interface ClarificationState {
   missionId: string;
-  questions: string[];
+  questions: ClarificationQuestion[];
   answers: string[];
   currentIndex: number;
+}
+
+export function formatClarificationQuestion(question: ClarificationQuestion): string {
+  return question.title;
+}
+
+export function clarificationAnswerLabel(question: ClarificationQuestion, answer: string): string {
+  const matched = question.options.find((option) => option.id === answer);
+  return matched?.label ?? answer;
+}
+
+function legacyClarificationQuestion(text: string): ClarificationQuestion {
+  return {
+    title: text,
+    context: "Pick the closest option, or describe your own preference below.",
+    options: [
+      {
+        id: "best-judgment",
+        label: "Use your best judgment",
+        pros: ["Unblocks planning quickly"],
+        cons: ["May not match a specific preference"]
+      },
+      {
+        id: "custom",
+        label: "Something else (I'll describe it)",
+        pros: ["Fully custom"],
+        cons: ["Needs a short written answer"]
+      }
+    ],
+    recommendation: "best-judgment"
+  };
+}
+
+export function normalizeClarificationQuestion(item: unknown): ClarificationQuestion | null {
+  if (typeof item === "string") {
+    const text = item.trim();
+    return text ? legacyClarificationQuestion(text) : null;
+  }
+  if (!item || typeof item !== "object") return null;
+  const body = item as Partial<ClarificationQuestion> & { question?: string };
+  const title = (body.title ?? body.question)?.trim();
+  if (!title) return null;
+  const context = body.context?.trim() || "Help narrow this before planning begins.";
+  const options: ClarificationOption[] = [];
+  for (const option of body.options ?? []) {
+    if (!option || typeof option !== "object") continue;
+    const row = option as Partial<ClarificationOption>;
+    const id = row.id?.trim();
+    const label = row.label?.trim();
+    if (!id || !label) continue;
+    options.push({
+      id,
+      label,
+      ...(row.pros?.length ? { pros: row.pros.filter(Boolean) } : {}),
+      ...(row.cons?.length ? { cons: row.cons.filter(Boolean) } : {})
+    });
+  }
+  if (options.length < 2) return legacyClarificationQuestion(title);
+  const recommendation = body.recommendation?.trim();
+  const fallback = options[0]?.id ?? "option-a";
+  return {
+    title,
+    context,
+    options,
+    recommendation: recommendation && options.some((option) => option.id === recommendation) ? recommendation : fallback
+  };
+}
+
+export function normalizeClarificationQuestions(raw: unknown): ClarificationQuestion[] {
+  if (!Array.isArray(raw)) {
+    if (typeof raw === "string" && raw.trim()) return [legacyClarificationQuestion(raw.trim())];
+    return [];
+  }
+  return raw.map((item) => normalizeClarificationQuestion(item)).filter((item): item is ClarificationQuestion => item !== null).slice(0, 3);
+}
+
+export function normalizeClarificationState(state: ClarificationState): ClarificationState {
+  return {
+    ...state,
+    questions: normalizeClarificationQuestions(state.questions)
+  };
 }
 
 export type FileGraphNodeStatus = "unchanged" | "modified" | "added" | "untracked";
@@ -149,6 +244,23 @@ export interface Mission {
   branchName?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface MissionMessage {
+  id: string;
+  missionId: string;
+  role: "user" | "assistant";
+  text: string;
+  createdAt: string;
+}
+
+export interface PreviewInfo {
+  missionId: string;
+  branchId?: string;
+  ready: boolean;
+  entryPath?: string;
+  url?: string;
+  reason?: string;
 }
 
 export type WorktreeFileStatus = "modified" | "added" | "untracked" | "deleted";
@@ -266,6 +378,9 @@ export interface DashboardSnapshot {
   activities: AgentActivity[];
   harnessRecords: HarnessRecord[];
   clarification?: ClarificationState;
+  clarifications?: ClarificationState[];
+  messages?: MissionMessage[];
+  preview?: PreviewInfo;
   plan?: { missionId: string; steps: MissionStep[] };
   trainingWheels?: { enabled: boolean; ruleCount: number; requiredRules: number };
   profileRules?: ProfileRule[];
