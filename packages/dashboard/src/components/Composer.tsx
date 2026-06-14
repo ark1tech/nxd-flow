@@ -4,6 +4,7 @@ interface ComposerProps {
   draft: string;
   live: boolean;
   running: boolean;
+  hasSession?: boolean;
   error?: string;
   onDraftChange: (value: string) => void;
   onLiveChange: (value: boolean) => void;
@@ -14,6 +15,7 @@ export function Composer({
   draft,
   live,
   running,
+  hasSession = false,
   error,
   onDraftChange,
   onLiveChange,
@@ -39,7 +41,7 @@ export function Composer({
           value={draft}
           onChange={(event) => onDraftChange(event.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Describe a feature…"
+          placeholder={hasSession ? "Add a follow-up or refinement…" : "Describe a feature…"}
           disabled={running}
           data-autopilot-composer
         />
@@ -58,14 +60,14 @@ export function Composer({
             <span>Live agents</span>
           </label>
           <div className="flex items-center gap-2">
-            <span className="hidden text-[10px] text-muted sm:inline">Enter to run</span>
+            <span className="hidden text-[10px] text-muted sm:inline">{hasSession ? "Enter to send" : "Enter to run"}</span>
             <button
               type="button"
               className="rounded-lg bg-accent px-3.5 py-1.5 text-[12px] font-semibold text-white transition hover:bg-accent-hover disabled:opacity-40"
               onClick={onRun}
               disabled={running || !draft.trim()}
             >
-              {running ? "Running…" : "Run"}
+              {running ? "Running…" : hasSession ? "Send" : "Run"}
             </button>
           </div>
         </div>

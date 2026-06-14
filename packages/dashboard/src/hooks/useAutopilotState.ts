@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { DashboardMessage, DashboardSnapshot, DecisionNode, MissionSummary } from "@autopilot/shared";
+import type { ClarificationQuestion, DashboardMessage, DashboardSnapshot, DecisionNode, MissionSummary } from "@autopilot/shared";
+import { clarificationAnswerLabel } from "@autopilot/shared";
 
 export const emptyState: DashboardSnapshot = {
   missions: [],
@@ -38,7 +39,6 @@ export function useAutopilotState() {
   }, [sessionMissionId]);
 
   useEffect(() => {
-    void fetch("/api/reset", { method: "POST" }).catch(() => undefined);
     void loadMissions();
     setState(emptyState);
 
@@ -51,7 +51,11 @@ export function useAutopilotState() {
 
       if (message.type === "state") {
         void loadMissions();
-        setState(sessionId ? filterSessionState(message.payload, sessionId) : emptyState);
+        if (!sessionId) {
+          setState(emptyState);
+          return;
+        }
+        void applySessionState(message.payload, sessionId).then(setState);
         return;
       }
       if (message.type === "event") {
@@ -61,10 +65,22 @@ export function useAutopilotState() {
       }
       if (message.type === "activity") {
         if (sessionId && message.payload.missionId && message.payload.missionId !== sessionId) return;
-        setState((current) => ({
-          ...current,
-          activities: [...current.activities.slice(-49), message.payload]
-        }));
+        setState((current) => {
+          const incoming = message.payload;
+          if (incoming.kind === "thinking") {
+            const activities = [...current.activities];
+            const last = activities.at(-1);
+            if (
+              last?.kind === "thinking" &&
+              last.missionId === incoming.missionId &&
+              last.stepId === incoming.stepId
+            ) {
+              activities[activities.length - 1] = incoming;
+              return { ...current, activities };
+            }
+          }
+          return { ...current, activities: [...current.activities.slice(-49), incoming] };
+        });
         return;
       }
       if (message.type === "pending") {
@@ -89,7 +105,11 @@ export function useAutopilotState() {
     const res = await fetch("/api/state");
     const payload = (await res.json()) as DashboardSnapshot;
     await loadMissions();
-    setState(sessionRef.current ? filterSessionState(payload, sessionRef.current) : emptyState);
+    if (!sessionRef.current) {
+      setState(emptyState);
+      return;
+    }
+    setState(await applySessionState(payload, sessionRef.current));
   }, [loadMissions]);
 
   const switchSession = useCallback(async (missionId: string) => {
@@ -97,12 +117,48 @@ export function useAutopilotState() {
     setSessionMissionId(missionId);
     const res = await fetch("/api/state");
     const payload = (await res.json()) as DashboardSnapshot;
-    setState(filterSessionState(payload, missionId));
+    setState(await applySessionState(payload, missionId));
   }, []);
+
+  useEffect(() => {
+    if (!sessionMissionId) return;
+    const mission = state.missions[0];
+    if (mission?.status !== "waiting" || state.clarification) return;
+    void enrichSessionState(state, sessionMissionId).then((enriched) => {
+      if (enriched.clarification) setState(enriched);
+    });
+  }, [sessionMissionId, state.missions[0]?.status, state.clarification?.missionId]);
 
   const sessionState = filterSessionState(state, sessionMissionId);
 
   return { state: sessionState, missions, connected, refresh, sessionMissionId, switchSession, clearMissions, beginSession: switchSession };
+}
+
+function clarificationForSession(state: DashboardSnapshot, sessionMissionId?: string): DashboardSnapshot["clarification"] {
+  if (!sessionMissionId) return undefined;
+  const items = state.clarifications ?? (state.clarification ? [state.clarification] : []);
+  return items.find((item) => item.missionId === sessionMissionId) ?? (state.clarification?.missionId === sessionMissionId ? state.clarification : undefined);
+}
+
+async function enrichSessionState(state: DashboardSnapshot, sessionMissionId: string): Promise<DashboardSnapshot> {
+  if (clarificationForSession(state, sessionMissionId)) return state;
+  const mission = state.missions.find((item) => item.id === sessionMissionId) ?? state.missions[0];
+  if (!mission || mission.status !== "waiting") return state;
+  try {
+    const res = await fetch(`/api/missions/${sessionMissionId}/clarification`);
+    if (!res.ok) return state;
+    const payload = (await res.json()) as { clarification?: NonNullable<DashboardSnapshot["clarification"]> };
+    if (!payload.clarification) return state;
+    const clarifications = [...(state.clarifications ?? []), payload.clarification];
+    return { ...state, clarifications, clarification: payload.clarification };
+  } catch {
+    return state;
+  }
+}
+
+async function applySessionState(payload: DashboardSnapshot, sessionMissionId: string): Promise<DashboardSnapshot> {
+  const filtered = filterSessionState(payload, sessionMissionId);
+  return enrichSessionState(filtered, sessionMissionId);
 }
 
 export function filterSessionState(state: DashboardSnapshot, sessionMissionId?: string): DashboardSnapshot {
@@ -119,7 +175,9 @@ export function filterSessionState(state: DashboardSnapshot, sessionMissionId?: 
     branches: state.branches.filter((branch) => branch.missionId === sessionMissionId),
     events: state.events.filter((event) => event.missionId === sessionMissionId),
     harnessRecords: state.harnessRecords.filter((record) => record.missionId === sessionMissionId),
-    clarification: state.clarification?.missionId === sessionMissionId ? state.clarification : undefined
+    clarification: clarificationForSession(state, sessionMissionId),
+    messages: (state.messages ?? []).filter((message) => message.missionId === sessionMissionId),
+    preview: state.preview?.missionId === sessionMissionId ? state.preview : undefined
   };
 }
 
@@ -145,7 +203,9 @@ export interface StepGroupFeed {
   id: string;
   stepId?: string;
   stepTitle: string;
-  thoughts: string[];
+  actions: string[];
+  ramble?: string;
+  currentAction?: string;
   outcome?: { text: string; decisionId: string };
   active?: boolean;
 }
@@ -154,6 +214,7 @@ export interface FeedItem {
   id: string;
   kind: "user" | "step-group" | "status" | "escalation" | "resolved" | "clarification";
   text?: string;
+  clarificationQuestion?: ClarificationQuestion;
   stepGroup?: StepGroupFeed;
   decision?: DecisionNode;
   active?: boolean;
@@ -163,7 +224,15 @@ export function feedItems(state: DashboardSnapshot, waiting?: DecisionNode): Fee
   const mission = state.missions[0];
   if (!mission) return [];
 
-  const items: FeedItem[] = [{ id: "user-prompt", kind: "user", text: mission.idea }];
+  const items: FeedItem[] = [];
+
+  const initialUser = (state.messages ?? []).find((message) => message.role === "user")?.text ?? mission.idea;
+  items.push({ id: "user-prompt", kind: "user", text: initialUser });
+
+  for (const message of state.messages ?? []) {
+    if (message.role !== "user" || message.text === initialUser) continue;
+    items.push({ id: message.id, kind: "user", text: message.text });
+  }
 
   const stepNameById = buildStepNameLookup(state);
   const stepGroups = buildStepGroups(state, stepNameById, waiting);
@@ -173,15 +242,22 @@ export function feedItems(state: DashboardSnapshot, waiting?: DecisionNode): Fee
 
   if (state.clarification) {
     for (let index = 0; index < state.clarification.answers.length; index += 1) {
+      const question = state.clarification.questions[index];
+      const raw = state.clarification.answers[index];
       items.push({
         id: `clar-answer-${index}`,
         kind: "resolved",
-        text: state.clarification.answers[index]
+        text: question ? clarificationAnswerLabel(question, raw) : raw
       });
     }
     const activeQuestion = state.clarification.questions[state.clarification.currentIndex];
     if (activeQuestion && mission.status === "waiting" && !waiting) {
-      items.push({ id: "clarification-active", kind: "clarification", text: activeQuestion, active: true });
+      items.push({
+        id: "clarification-active",
+        kind: "clarification",
+        clarificationQuestion: activeQuestion,
+        active: true
+      });
     }
   }
 
@@ -201,6 +277,14 @@ export function feedItems(state: DashboardSnapshot, waiting?: DecisionNode): Fee
 
   if (waiting && !escalatedIds.has(waiting.id)) {
     items.push({ id: waiting.id, kind: "escalation", decision: waiting, active: true });
+  }
+
+  if (mission.status === "waiting" && !state.clarification && !waiting) {
+    items.push({
+      id: "system-waiting",
+      kind: "status",
+      text: "Waiting for your input — pick an option in the decision graph."
+    });
   }
 
   if (mission.status === "completed") {
@@ -240,7 +324,7 @@ function buildStepGroups(
 ): StepGroupFeed[] {
   const groups: StepGroupFeed[] = [];
   const groupByKey = new Map<string, StepGroupFeed>();
-  const dedupeKeys = new Set<string>();
+  const actionKeys = new Set<string>();
 
   const ensureGroup = (key: string, stepId: string | undefined, stepName: string): StepGroupFeed => {
     const existing = groupByKey.get(key);
@@ -249,27 +333,37 @@ function buildStepGroups(
       id: `step-${key}`,
       stepId,
       stepTitle: stepTitle(stepName),
-      thoughts: []
+      actions: []
     };
     groupByKey.set(key, group);
     groups.push(group);
     return group;
   };
 
-  const addThought = (key: string, stepId: string | undefined, stepName: string, text: string): void => {
+  const addAction = (key: string, stepId: string | undefined, stepName: string, text: string): void => {
     const dedupeKey = `${key}::${text}`;
-    if (dedupeKeys.has(dedupeKey)) return;
-    dedupeKeys.add(dedupeKey);
-    ensureGroup(key, stepId, stepName).thoughts.push(text);
+    if (actionKeys.has(dedupeKey)) return;
+    actionKeys.add(dedupeKey);
+    const group = ensureGroup(key, stepId, stepName);
+    group.actions.push(text);
+    group.currentAction = text;
   };
 
   for (const activity of state.activities) {
+    const stepId = activity.stepId;
+    const stepName = stepId ? stepNameById.get(stepId) ?? stepId : inferPreStepName(activity.message);
+    if (stepName === "scope" && state.clarification) continue;
+    const key = stepId ?? `pre-${stepName}`;
+
+    if (activity.kind === "thinking") {
+      const ramble = cleanRamble(activity.message);
+      if (ramble) ensureGroup(key, stepId, stepName).ramble = ramble;
+      continue;
+    }
+
     const text = humanizeActivity(activity.message);
     if (!text) continue;
-    const stepId = activity.stepId;
-    const stepName = stepId ? stepNameById.get(stepId) ?? stepId : inferPreStepName(text);
-    const key = stepId ?? `pre-${stepName}`;
-    addThought(key, stepId, stepName, text);
+    addAction(key, stepId, stepName, text);
   }
 
   const pending = state.pendingNodes.at(-1);
@@ -277,9 +371,7 @@ function buildStepGroups(
   if (pending && missionRunning) {
     const group = ensureGroup(pending.stepId, pending.stepId, pending.stepName);
     group.active = true;
-    if (pending.label && !group.thoughts.includes(pending.label)) {
-      group.thoughts.push(pending.label);
-    }
+    if (pending.label) addAction(pending.stepId, pending.stepId, pending.stepName, pending.label);
   }
 
   for (const group of groups) {
@@ -296,7 +388,7 @@ function buildStepGroups(
     }
   }
 
-  return groups.filter((group) => group.thoughts.length > 0 || group.outcome || group.active);
+  return groups.filter((group) => group.actions.length > 0 || group.ramble || group.outcome || group.active);
 }
 
 function inferPreStepName(text: string): string {
@@ -318,9 +410,19 @@ function stepTitle(stepName: string): string {
     "site-auth": "Google auth",
     "mission-plan": "Architecture",
     "mission-implementation": "Implementation",
-    "mission-handoff": "Handoff"
+    "mission-handoff": "Handoff",
+    "follow-up": "Follow-up"
   };
   return labels[stepName] ?? stepName.replace(/-/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function cleanRamble(message: string): string | null {
+  const text = message
+    .replace(/^\[Offline\]\s*/i, "")
+    .replace(/^Harness:\s*\w+\s+\S+\s*$/i, "")
+    .trim();
+  if (!text || looksLikeJsonFragment(text)) return null;
+  return text;
 }
 
 function humanizeActivity(message: string): string | null {
@@ -333,6 +435,17 @@ function humanizeActivity(message: string): string | null {
     .trim();
 
   if (!text) return null;
+  if (looksLikeJsonFragment(text)) return null;
   if (/^Recording decision/i.test(text)) return "Recording decision…";
+  if (/^Checking scope/i.test(text)) return null;
   return text;
+}
+
+function looksLikeJsonFragment(text: string): boolean {
+  const trimmed = text.trim();
+  if (/^[\{\}\[\]",:`]/.test(trimmed)) return true;
+  if (/^```/.test(trimmed)) return true;
+  if (trimmed.length <= 2 && /^[\w",:\[\]{}\\]+$/.test(trimmed)) return true;
+  if (/^"(ready|questions|title|context|options|recommendation)"/.test(trimmed)) return true;
+  return false;
 }

@@ -1,8 +1,7 @@
 import type { ReactElement } from "react";
 import { useEffect, useRef, useState } from "react";
-import type { DashboardSnapshot, DecisionNode } from "@autopilot/shared";
-import { decisionLabel, feedItems, threadOffline, waitingDecision, type FeedItem, type StepGroupFeed } from "../hooks/useAutopilotState";
-import { DecisionOptionsPanel } from "./DecisionOptionsPanel";
+import type { AgentActivity, DashboardSnapshot, DecisionNode } from "@autopilot/shared";
+import { feedItems, threadOffline, waitingDecision, type FeedItem, type StepGroupFeed } from "../hooks/useAutopilotState";
 import { EmptyState } from "./EmptyState";
 
 interface ChatRailProps {
@@ -30,13 +29,15 @@ export function ChatRail({
   const offline = threadOffline(state);
   const hasSession = Boolean(state.missions.length);
   const clarifying = Boolean(state.clarification && state.missions[0]?.status === "waiting" && !waiting);
+  const hasActiveStep = items.some((item) => item.kind === "step-group" && item.stepGroup?.active);
+  const latestActivity = state.activities.at(-1);
 
   useEffect(() => {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: "smooth" });
-  }, [items.length, running, waiting?.id, state.clarification?.currentIndex]);
+  }, [items.length, running, waiting?.id, state.clarification?.currentIndex, state.activities.length, latestActivity?.message]);
 
   const content = (
-    <div ref={threadRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3">
+    <div ref={threadRef} className="chat-panel-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3">
       {!hasSession ? (
         <EmptyState title="Start a mission" description="Describe what to build below, then press Run or Enter." />
       ) : (
@@ -58,7 +59,9 @@ export function ChatRail({
               onClarify={onClarify}
             />
           ))}
-          {running && !waiting && !clarifying ? <WorkingIndicator /> : null}
+          {running && !waiting && !clarifying && !hasActiveStep ? (
+            <WorkingIndicator latestActivity={latestActivity} />
+          ) : null}
           {onOpenHarness && state.harnessRecords.length > 0 ? (
             <button type="button" onClick={onOpenHarness} className="w-full rounded-lg border border-border py-1.5 text-[11px] text-muted hover:text-ink">
               View harness ({state.harnessRecords.length} agent calls)
@@ -70,10 +73,14 @@ export function ChatRail({
   );
 
   if (embedded) {
-    return <div className="flex h-full min-h-0 flex-col">{content}</div>;
+    return <div className="chat-panel flex h-full min-h-0 flex-col">{content}</div>;
   }
 
-  return <aside className="flex h-full min-h-0 w-[340px] shrink-0 flex-col border-r border-border bg-panel">{content}</aside>;
+  return (
+    <aside className="chat-panel flex h-full min-h-0 w-[340px] shrink-0 flex-col border-r border-border bg-panel">
+      {content}
+    </aside>
+  );
 }
 
 function FeedRow({
@@ -105,8 +112,17 @@ function FeedRow({
     return <p className="py-2 text-center text-[11px] text-muted">{item.text}</p>;
   }
 
-  if (item.kind === "clarification" && item.active) {
-    return <ClarificationCard question={item.text ?? ""} busy={running} onSubmit={onClarify} />;
+  if (item.kind === "clarification" && item.active && item.clarificationQuestion) {
+    return (
+      <button
+        type="button"
+        className="w-full rounded-xl border border-warning/30 bg-warning/5 px-3 py-2.5 text-left transition hover:bg-warning/10"
+      >
+        <p className="text-[11px] font-semibold text-warning">Scope check</p>
+        <p className="mt-1 line-clamp-2 text-[12px] leading-snug text-ink">{item.clarificationQuestion.title}</p>
+        <p className="mt-1.5 text-[11px] text-muted">Pick an option in the decision graph →</p>
+      </button>
+    );
   }
 
   if (item.kind === "resolved" && item.text) {
@@ -141,67 +157,114 @@ function StepGroupRow({
   onSelectDecision: (id: string) => void;
 }): ReactElement {
   return (
-    <div className="rounded-xl border border-border/70 bg-panel/80 px-3 py-2.5">
-      <div className="flex items-center gap-2">
-        <span className={`h-full w-0.5 shrink-0 self-stretch rounded-full ${group.active ? "bg-accent" : "bg-border-strong"}`} />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <p className="text-[11px] font-semibold text-ink">{group.stepTitle}</p>
-            {group.active ? <span className="text-[10px] font-medium text-accent">In progress</span> : null}
-          </div>
-          {group.thoughts.length > 0 ? (
-            <ul className="mt-1.5 space-y-1">
-              {group.thoughts.map((thought, index) => (
-                <li key={`${group.id}-thought-${index}`} className="text-[12px] leading-relaxed text-muted">
-                  {thought}
-                </li>
-              ))}
-            </ul>
-          ) : null}
-          {group.outcome ? (
-            <button
-              type="button"
-              onClick={() => onSelectDecision(group.outcome!.decisionId)}
-              className="mt-2 w-full rounded-lg border border-accent/20 bg-accent/5 px-2.5 py-1.5 text-left transition hover:bg-accent/10"
-            >
-              <p className="text-[10px] font-medium uppercase tracking-wide text-accent">Chose</p>
-              <p className="mt-0.5 text-[12px] font-medium text-ink">{group.outcome.text}</p>
-            </button>
-          ) : null}
+    <div
+      className={[
+        "rounded-xl border px-3 py-2.5",
+        group.active ? "border-accent/25 bg-panel shadow-card" : "border-border/70 bg-panel/80"
+      ].join(" ")}
+    >
+      <div className={`min-w-0 border-l-2 pl-2.5 ${group.active ? "border-accent" : "border-border-strong"}`}>
+        <div className="flex min-w-0 items-baseline justify-between gap-2">
+          <p className="min-w-0 text-[11px] font-semibold text-ink">{group.stepTitle}</p>
+          {group.active ? <span className="shrink-0 text-[10px] font-medium text-accent">In progress</span> : null}
         </div>
+
+        {group.actions.length > 0 ? (
+          <ul className="mt-1.5 space-y-1">
+            {group.actions.map((action, index) => {
+              const isLatest = index === group.actions.length - 1;
+              const highlighted = group.active && isLatest;
+              return (
+                <li
+                  key={`${group.id}-action-${index}`}
+                  className={[
+                    "flex min-w-0 items-start gap-1.5 text-[12px] leading-snug",
+                    highlighted ? "font-medium text-ink" : "text-muted"
+                  ].join(" ")}
+                >
+                  {highlighted ? <span className="mt-1.5 h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent" /> : null}
+                  <span className="min-w-0 flex-1 break-words">{action}</span>
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
+
+        {group.ramble ? <RambleBlock text={group.ramble} live={Boolean(group.active)} /> : null}
+
+        {group.outcome ? (
+          <button
+            type="button"
+            onClick={() => onSelectDecision(group.outcome!.decisionId)}
+            className="mt-2 w-full rounded-lg border border-accent/20 bg-accent/5 px-2.5 py-1.5 text-left transition hover:bg-accent/10"
+          >
+            <p className="text-[10px] font-medium uppercase tracking-wide text-accent">Chose</p>
+            <p className="mt-0.5 text-[12px] font-medium text-ink">{group.outcome.text}</p>
+          </button>
+        ) : null}
       </div>
     </div>
   );
 }
 
-function ClarificationCard({
-  question,
-  busy,
-  onSubmit
-}: {
-  question: string;
-  busy: boolean;
-  onSubmit: (answer: string) => Promise<void>;
-}): ReactElement {
-  const [answer, setAnswer] = useState("");
+const RAMBLE_LINE_HEIGHT_REM = 1.625;
+const RAMBLE_VISIBLE_LINES = 5;
+
+function RambleBlock({ text, live }: { text: string; live: boolean }): ReactElement {
+  const [expanded, setExpanded] = useState(false);
+  const measureRef = useRef<HTMLDivElement>(null);
+  const [overflows, setOverflows] = useState(false);
+
+  useEffect(() => {
+    const node = measureRef.current;
+    if (!node) return;
+    const linePx = RAMBLE_LINE_HEIGHT_REM * 12;
+    const maxVisible = linePx * RAMBLE_VISIBLE_LINES;
+    setOverflows(node.scrollHeight > maxVisible + 4);
+  }, [text]);
+
+  const collapsedStyle = !expanded && overflows
+    ? { maxHeight: `${RAMBLE_LINE_HEIGHT_REM * RAMBLE_VISIBLE_LINES}rem` }
+    : undefined;
+
   return (
-    <div className="rounded-xl border border-warning/30 bg-panel p-3 shadow-card">
-      <p className="text-[11px] font-semibold text-warning">Scope check</p>
-      <p className="mt-1.5 text-[13px] leading-snug text-ink">{question}</p>
-      <textarea
-        className="mt-2 h-16 w-full resize-none rounded-xl border border-border bg-canvas px-2.5 py-2 text-[12px] outline-none focus:ring-2 focus:ring-accent/20"
-        placeholder="Your answer…"
-        value={answer}
-        onChange={(event) => setAnswer(event.target.value)}
-      />
-      <button
-        type="button"
-        disabled={busy || !answer.trim()}
-        className="mt-2 w-full rounded-xl bg-accent py-2 text-[12px] font-semibold text-white disabled:opacity-50"
-        onClick={() => void onSubmit(answer.trim())}
+    <div className="mt-1.5 min-w-0">
+      {!expanded && overflows ? (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="mb-1 text-[10px] font-medium text-muted/80 transition hover:text-muted"
+        >
+          Show earlier
+        </button>
+      ) : null}
+      <div
+        className={[
+          "min-w-0 overflow-hidden text-[12px] leading-relaxed text-muted",
+          !expanded && overflows ? "flex flex-col justify-end" : ""
+        ].join(" ")}
+        style={collapsedStyle}
       >
-        Continue
-      </button>
+        <div
+          ref={measureRef}
+          className={[
+            "min-w-0 whitespace-pre-wrap break-words",
+            !expanded && overflows ? "opacity-75" : "",
+            live && !expanded ? "opacity-80" : ""
+          ].join(" ")}
+        >
+          {text}
+        </div>
+      </div>
+      {expanded && overflows ? (
+        <button
+          type="button"
+          onClick={() => setExpanded(false)}
+          className="mt-1 text-[10px] font-medium text-muted/80 transition hover:text-muted"
+        >
+          Collapse
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -209,9 +272,7 @@ function ClarificationCard({
 function EscalationCard({
   decision,
   active,
-  busy,
-  onSelect,
-  onAnswer
+  onSelect
 }: {
   decision: DecisionNode;
   active: boolean;
@@ -219,10 +280,6 @@ function EscalationCard({
   onSelect: () => void;
   onAnswer: ChatRailProps["onAnswer"];
 }): ReactElement {
-  const [showOverride, setShowOverride] = useState(false);
-  const [overrideChoice, setOverrideChoice] = useState(decision.options.find((o) => o.id !== decision.choice)?.id);
-  const proposed = decisionLabel(decision);
-
   if (!active) {
     return (
       <button type="button" onClick={onSelect} className="w-full rounded-xl border border-border bg-canvas px-3 py-2 text-left">
@@ -233,78 +290,35 @@ function EscalationCard({
   }
 
   return (
-    <div className="rounded-xl border border-accent/25 bg-panel p-3 shadow-card" onClick={onSelect}>
+    <button
+      type="button"
+      onClick={onSelect}
+      className="w-full rounded-xl border border-accent/25 bg-accent/5 px-3 py-2.5 text-left transition hover:bg-accent/10"
+    >
       <p className="text-[11px] font-semibold text-accent">Input needed</p>
-      <p className="mt-1.5 text-[13px] leading-snug text-ink">{decision.question}</p>
-      <div className="mt-2 max-h-48 overflow-y-auto">
-        <DecisionOptionsPanel decision={decision} />
-      </div>
-      <div className="mt-2 rounded-xl bg-canvas px-2.5 py-2">
-        <p className="text-[10px] text-muted">Pilot recommends</p>
-        <p className="text-[13px] font-medium text-ink">{proposed}</p>
-      </div>
-      {!showOverride ? (
-        <div className="mt-3 space-y-2">
-          <button
-            type="button"
-            disabled={busy}
-            className="w-full rounded-xl bg-accent py-2 text-[12px] font-semibold text-white disabled:opacity-50"
-            onClick={(event) => {
-              event.stopPropagation();
-              void onAnswer(decision.id, "approve");
-            }}
-          >
-            Approve recommendation
-          </button>
-          <button
-            type="button"
-            className="w-full text-[11px] font-medium text-muted hover:text-ink"
-            onClick={(event) => {
-              event.stopPropagation();
-              setShowOverride(true);
-            }}
-          >
-            Choose another option
-          </button>
-        </div>
-      ) : (
-        <div className="mt-3 space-y-2" onClick={(event) => event.stopPropagation()}>
-          <div className="flex flex-wrap gap-1.5">
-            {decision.options.map((option) => (
-              <button
-                key={option.id}
-                type="button"
-                onClick={() => setOverrideChoice(option.id)}
-                className={[
-                  "rounded-md px-2.5 py-1 text-[11px] font-medium",
-                  overrideChoice === option.id ? "bg-accent text-white" : "bg-canvas text-ink ring-1 ring-border"
-                ].join(" ")}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            disabled={busy || !overrideChoice}
-            className="w-full rounded-xl border border-border py-2 text-[12px] font-medium text-ink disabled:opacity-50"
-            onClick={() => void onAnswer(decision.id, "override", overrideChoice, "context")}
-          >
-            Submit choice
-          </button>
-        </div>
-      )}
-    </div>
+      <p className="mt-1 line-clamp-2 text-[12px] leading-snug text-ink">{decision.question}</p>
+      <p className="mt-1.5 text-[11px] text-muted">Click the highlighted node in the graph →</p>
+    </button>
   );
 }
 
-function WorkingIndicator(): ReactElement {
+function WorkingIndicator({ latestActivity }: { latestActivity?: AgentActivity }): ReactElement {
+  const label =
+    latestActivity?.kind === "thinking"
+      ? "Thinking…"
+      : latestActivity?.message?.replace(/…$/, "") ?? "Starting up";
+
   return (
-    <div className="border-l-2 border-accent/40 pl-2.5 py-1">
-      <div className="flex items-center gap-1.5 text-[12px] text-muted">
-        <span className="h-1 w-1 animate-pulse rounded-full bg-accent" />
-        <span>Autopilot is working…</span>
+    <div className="rounded-xl border border-accent/20 bg-accent/5 px-3 py-2">
+      <div className="flex min-w-0 items-center gap-1.5 border-l-2 border-accent/40 pl-2.5">
+        <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent" />
+        <span className="min-w-0 truncate text-[12px] font-medium text-ink">{label}</span>
       </div>
+      {latestActivity?.kind === "thinking" && latestActivity.message ? (
+        <RambleBlock text={latestActivity.message} live />
+      ) : latestActivity?.message && latestActivity.kind !== "thinking" ? (
+        <p className="mt-1.5 pl-4 text-[12px] leading-snug text-muted">{latestActivity.message}</p>
+      ) : null}
     </div>
   );
 }
