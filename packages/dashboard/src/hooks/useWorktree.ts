@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { WorktreeSnapshot } from "@autopilot/shared";
 
-export function useWorktree(missionId?: string, branchId?: string, refreshKey = 0): {
+export function useWorktree(missionId?: string, branchId?: string, refreshKey: string | number = 0): {
   snapshot?: WorktreeSnapshot;
   loading: boolean;
   refresh: () => Promise<void>;

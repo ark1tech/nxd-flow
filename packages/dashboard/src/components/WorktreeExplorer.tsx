@@ -75,7 +75,7 @@ export function WorktreeExplorer({
         {loading ? (
           <p className="px-3 py-2 text-[12px] text-muted">Loading tree…</p>
         ) : !snapshot?.entries.length ? (
-          <p className="px-3 py-2 text-[12px] text-muted">Worktree not available yet.</p>
+          <p className="px-3 py-2 text-[12px] text-muted">Worktree not available yet. Start a new mission if you still see Autopilot engine files from an older run.</p>
         ) : (
           <TreeList
             entries={snapshot.entries}

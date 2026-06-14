@@ -11,7 +11,7 @@ export function HarnessInspector({ records, selectedRecordId, onSelectRecord }: 
   const selected = records.find((record) => record.id === selectedRecordId) ?? records.at(-1);
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 space-y-3">
+    <div className="hover-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 space-y-3">
       <section>
         <p className="text-[10px] font-medium uppercase tracking-wide text-muted">Agent calls ({records.length})</p>
         <div className="mt-1.5 space-y-1">
@@ -46,15 +46,15 @@ export function HarnessInspector({ records, selectedRecordId, onSelectRecord }: 
           <MetaRow label="Tools" value={selected.tools.join(", ") || "none"} />
           <div>
             <p className="text-[10px] font-medium text-muted">Prompt</p>
-            <pre className="mt-1 max-h-28 overflow-auto rounded-xl bg-canvas p-2 text-[10px] leading-relaxed text-ink whitespace-pre-wrap">{selected.prompt}</pre>
+            <pre className="hover-scroll mt-1 max-h-28 overflow-auto rounded-xl bg-canvas p-2 text-[10px] leading-relaxed text-ink whitespace-pre-wrap">{selected.prompt}</pre>
           </div>
           <div>
             <p className="text-[10px] font-medium text-muted">Skills injected</p>
-            <pre className="mt-1 max-h-20 overflow-auto rounded-xl bg-canvas p-2 text-[10px] leading-relaxed text-muted whitespace-pre-wrap">{selected.skills || "—"}</pre>
+            <pre className="hover-scroll mt-1 max-h-20 overflow-auto rounded-xl bg-canvas p-2 text-[10px] leading-relaxed text-muted whitespace-pre-wrap">{selected.skills || "—"}</pre>
           </div>
           <div>
             <p className="text-[10px] font-medium text-muted">Response</p>
-            <pre className="mt-1 max-h-32 overflow-auto rounded-xl bg-canvas p-2 text-[10px] leading-relaxed text-ink whitespace-pre-wrap">{selected.rawResponse.slice(0, 1200)}</pre>
+            <pre className="hover-scroll mt-1 max-h-32 overflow-auto rounded-xl bg-canvas p-2 text-[10px] leading-relaxed text-ink whitespace-pre-wrap">{selected.rawResponse.slice(0, 1200)}</pre>
           </div>
         </section>
       ) : null}

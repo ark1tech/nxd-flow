@@ -24,6 +24,7 @@ interface LeftSidebarProps {
   onNewMission: () => void;
   onClearMissions: () => void;
   onStart: (idea: string, live: boolean) => Promise<boolean>;
+  onContinue?: (message: string, live: boolean) => Promise<boolean>;
   onSelectDecision: (id: string) => void;
   onAnswer: (id: string, mode: "approve" | "override", choice?: string, scope?: "once" | "context" | "global") => Promise<void>;
   onClarify: (answer: string) => Promise<void>;
@@ -37,16 +38,19 @@ interface LeftSidebarProps {
 export function LeftSidebar(props: LeftSidebarProps): ReactElement {
   const [tab, setTab] = useState<SidebarTab>("agent");
   const [draft, setDraft] = useState("");
-  const [live, setLive] = useState(false);
+  const [live, setLive] = useState(true);
 
   async function handleRun(): Promise<void> {
     if (!draft.trim() || props.running) return;
-    const ok = await props.onStart(draft.trim(), live);
+    const ok =
+      props.sessionMissionId && props.onContinue
+        ? await props.onContinue(draft.trim(), live)
+        : await props.onStart(draft.trim(), live);
     if (ok) setDraft("");
   }
 
   return (
-    <aside className="relative flex h-full min-h-0 w-[300px] shrink-0 flex-col border-r border-border bg-panel">
+    <aside className="relative flex h-full min-h-0 w-full flex-col bg-panel">
       <MissionPicker
         missions={props.missions}
         activeMissionId={props.sessionMissionId}
@@ -94,6 +98,7 @@ export function LeftSidebar(props: LeftSidebarProps): ReactElement {
         draft={draft}
         live={live}
         running={props.running}
+        hasSession={Boolean(props.sessionMissionId)}
         error={props.runError}
         onDraftChange={setDraft}
         onLiveChange={setLive}
